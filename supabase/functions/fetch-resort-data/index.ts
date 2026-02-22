@@ -63,16 +63,23 @@ async function fetchSnowData(resorts: typeof RESORTS) {
     const batch = resorts.slice(i, i + batchSize);
     const promises = batch.map(async (resort) => {
       try {
-        const url = `https://api.open-meteo.com/v1/forecast?latitude=${resort.lat}&longitude=${resort.lng}&daily=snowfall_sum,snow_depth&timezone=auto&forecast_days=7`;
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${resort.lat}&longitude=${resort.lng}&daily=snowfall_sum&hourly=snow_depth&timezone=auto&forecast_days=7`;
         const res = await fetch(url);
         if (!res.ok) throw new Error(`Open-Meteo error: ${res.status}`);
         const data = await res.json();
         
         const dailySnowfall = data.daily?.snowfall_sum || [];
-        const snowDepths = data.daily?.snow_depth || [];
+        const hourlySnowDepths = data.hourly?.snow_depth || [];
         
         const recentSnowfall = dailySnowfall.reduce((a: number, b: number) => a + (b || 0), 0);
-        const currentSnowDepth = snowDepths.length > 0 ? (snowDepths[snowDepths.length - 1] || 0) : 0;
+        // Get latest non-null snow depth from hourly data
+        let currentSnowDepth = 0;
+        for (let j = hourlySnowDepths.length - 1; j >= 0; j--) {
+          if (hourlySnowDepths[j] != null && hourlySnowDepths[j] > 0) {
+            currentSnowDepth = hourlySnowDepths[j];
+            break;
+          }
+        }
         
         snowData[resort.name] = {
           snowDepth: Math.round(currentSnowDepth * 10) / 10,
