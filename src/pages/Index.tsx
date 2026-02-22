@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Mountain, ArrowRight, ArrowLeft } from "lucide-react";
+import { Mountain, ArrowRight, ArrowLeft, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -11,9 +11,11 @@ import StepBudget from "@/components/steps/StepBudget";
 import StepInvites from "@/components/steps/StepInvites";
 import StepReview from "@/components/steps/StepReview";
 import LoadingAnimation from "@/components/LoadingAnimation";
+import { useAuth } from "@/hooks/useAuth";
 import type { DateRange } from "react-day-picker";
 
 const Index = () => {
+  const { user, loading: authLoading, signOut } = useAuth();
   const [started, setStarted] = useState(false);
   const [step, setStep] = useState(1);
   const [tripId, setTripId] = useState<string | null>(null);
@@ -72,6 +74,7 @@ const Index = () => {
 
     const tripData = {
       trip_name: basics.tripName || "Untitled Trip",
+      user_id: user?.id,
       date_start: basics.dateRange?.from?.toISOString().split("T")[0] || null,
       date_end: basics.dateRange?.to?.toISOString().split("T")[0] || null,
       group_size: basics.groupSize,
@@ -133,6 +136,14 @@ const Index = () => {
     return <LoadingAnimation />;
   }
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen snow-gradient flex items-center justify-center">
+        <div className="animate-pulse text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+
   if (!started) {
     return (
       <div className="min-h-screen snow-gradient flex items-center justify-center px-4">
@@ -157,14 +168,37 @@ const Index = () => {
             </p>
           </motion.div>
 
-          <Button
-            size="lg"
-            className="h-14 px-8 text-base font-semibold gap-2 animate-pulse-glow"
-            onClick={() => setStarted(true)}
-          >
-            Start Planning
-            <ArrowRight className="h-5 w-5" />
-          </Button>
+          {user ? (
+            <div className="space-y-3">
+              <Button
+                size="lg"
+                className="h-14 px-8 text-base font-semibold gap-2 animate-pulse-glow"
+                onClick={() => setStarted(true)}
+              >
+                Start Planning
+                <ArrowRight className="h-5 w-5" />
+              </Button>
+              <div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={signOut}
+                  className="text-muted-foreground gap-1.5"
+                >
+                  <LogOut className="h-3.5 w-3.5" /> Sign out
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button
+              size="lg"
+              className="h-14 px-8 text-base font-semibold gap-2 animate-pulse-glow"
+              onClick={() => navigate("/auth")}
+            >
+              Sign in to Start
+              <ArrowRight className="h-5 w-5" />
+            </Button>
+          )}
         </motion.div>
       </div>
     );
