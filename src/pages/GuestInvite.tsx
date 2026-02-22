@@ -30,12 +30,8 @@ const GuestInvite = () => {
   useEffect(() => {
     const fetchTrip = async () => {
       if (!tripId) return;
-      const { data } = await supabase
-        .from("trips")
-        .select("*")
-        .eq("id", tripId)
-        .single();
-      setTrip(data);
+      const { data } = await supabase.rpc("get_public_trip", { p_trip_id: tripId });
+      setTrip(data?.[0] || null);
       setLoading(false);
     };
     fetchTrip();

@@ -19,13 +19,13 @@ const ShareResults = () => {
     if (!tripId) return;
     const loadData = async () => {
       const [tripRes, guestsRes, recsRes] = await Promise.all([
-        supabase.from("trips").select("*").eq("id", tripId).single(),
-        supabase.from("guests").select("*").eq("trip_id", tripId),
-        supabase.from("recommendations").select("*").eq("trip_id", tripId).order("created_at", { ascending: false }).limit(1).single(),
+        supabase.rpc("get_public_trip", { p_trip_id: tripId }),
+        supabase.rpc("get_public_guests", { p_trip_id: tripId }),
+        supabase.rpc("get_public_recommendations", { p_trip_id: tripId }),
       ]);
-      setTrip(tripRes.data);
+      setTrip(tripRes.data?.[0] || null);
       setGuests(guestsRes.data || []);
-      if (recsRes.data) setResults(recsRes.data.results as any);
+      if (recsRes.data?.[0]) setResults(recsRes.data[0].results as any);
       setLoading(false);
     };
     loadData();
