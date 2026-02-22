@@ -4,27 +4,16 @@ import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
 
-const skillLabels = ["Beginner", "Intermediate", "Advanced", "Expert"];
-const vibeLabels: Record<string, string> = {
-  party: "🎉 Party Town",
-  "ski-in": "🏔️ Ski-In/Ski-Out",
-  budget: "💰 Budget Trip",
-  relaxed: "🧘 Relaxed & Scenic",
-  expert: "🏆 Expert Terrain",
-};
-
 interface StepReviewProps {
   basics: {
     tripName: string;
     dateRange: DateRange | undefined;
     groupSize: number;
     geography: string[];
-    vibe: string;
-  };
-  skills: {
-    skillRange: [number, number];
-    hasNonSkiers: boolean;
-    nonSkierImportance: number;
+    vibeEnergy: number;
+    vibeBudget: number;
+    vibeSkill: number;
+    skiInOut: boolean;
   };
   budget: {
     budgetType: "per_person" | "total";
@@ -62,7 +51,13 @@ const Section = ({
   </div>
 );
 
-const StepReview = ({ basics, skills, budget, guestCount, onGoToStep, onGenerate }: StepReviewProps) => {
+const vibeLabel = (value: number, left: string, right: string) => {
+  if (value <= 25) return left;
+  if (value >= 75) return right;
+  return "Balanced";
+};
+
+const StepReview = ({ basics, budget, guestCount, onGoToStep, onGenerate }: StepReviewProps) => {
   const allSubmitted = guestCount >= basics.groupSize;
 
   return (
@@ -87,17 +82,11 @@ const StepReview = ({ basics, skills, budget, guestCount, onGoToStep, onGenerate
         )}
         <p>{basics.groupSize} people</p>
         <p>{basics.geography.length > 0 ? basics.geography.join(", ") : "No preference"}</p>
-        <p>{vibeLabels[basics.vibe] || "Not selected"}</p>
+        <p>Vibe: {vibeLabel(basics.vibeEnergy, "Relaxed", "Party")} · {vibeLabel(basics.vibeBudget, "Value", "Luxury")} · {vibeLabel(basics.vibeSkill, "Beginner Friendly", "Experts Only")}</p>
+        {basics.skiInOut && <p>🏔️ Ski-In/Ski-Out preferred</p>}
       </Section>
 
-      <Section title="Skill Mix" step={2} onEdit={onGoToStep}>
-        <p>
-          {skillLabels[skills.skillRange[0]]} → {skillLabels[skills.skillRange[1]]}
-        </p>
-        {skills.hasNonSkiers && <p>Non-skier activities: {skills.nonSkierImportance}% importance</p>}
-      </Section>
-
-      <Section title="Budget" step={3} onEdit={onGoToStep}>
+      <Section title="Budget" step={2} onEdit={onGoToStep}>
         <p>
           ${budget.budgetAmount.toLocaleString()}
           {budget.budgetAmount >= 10000 ? "+" : ""}{" "}
@@ -107,7 +96,7 @@ const StepReview = ({ basics, skills, budget, guestCount, onGoToStep, onGenerate
         <p>Lodging: {budget.lodging}</p>
       </Section>
 
-      <Section title="Guests" step={4} onEdit={onGoToStep}>
+      <Section title="Guests" step={3} onEdit={onGoToStep}>
         <p>
           {guestCount} of {basics.groupSize} submitted
         </p>
