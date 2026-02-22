@@ -49,6 +49,10 @@ serve(async (req) => {
     const resortData = await resortRes.json();
     if (!resortData.resorts) throw new Error('Failed to fetch resort data');
 
+    // Build resort lookup for enrichment
+    const resortLookup: Record<string, any> = {};
+    resortData.resorts.forEach((r: any) => { resortLookup[r.name] = r; });
+
     // 4. Calculate trip duration
     let nights = 5;
     if (trip.date_start && trip.date_end) {
@@ -70,8 +74,8 @@ serve(async (req) => {
     });
     const lodgingData = await lodgingRes.json();
 
-    // 6. Attempt to fetch flight data (may not be available if Amadeus isn't configured)
-    let flightData = null;
+    // 6. Attempt to fetch flight data
+    let flightData: any = null;
     try {
       const origins = (guests || [])
         .filter((g: any) => g.airport_code || g.origin_city)
@@ -93,7 +97,6 @@ serve(async (req) => {
         }
       }
     } catch {
-      // Flight data is optional
       console.log('Flight data not available, proceeding without it');
     }
 
@@ -106,21 +109,24 @@ serve(async (req) => {
       });
     }
 
-    // 8. Build AI prompt
+    // 8. Build AI prompt with enriched output schema
     const systemPrompt = `You are an expert ski trip planner. Given a group's preferences, budget, skill levels, origin cities, pass types, vibe preferences, and real-time resort data including snow conditions, flight prices, and lodging options, recommend the top 3 ski resorts.
 
 For each resort, provide:
 1. A match score (0-100) reflecting how well it fits THIS specific group
-2. A 2-sentence "why this resort fits" summary tailored to THIS group's specific inputs
-3. Estimated total cost per person broken down:
-   - flights_avg: average round-trip flight cost (estimate $300-800 domestic, $800-1500 international if no flight data available)
+2. A 2-sentence "summary" tailored to this group
+3. A longer "whyThisResort" paragraph (3-5 sentences) explaining in detail why this resort is perfect for this group
+4. Estimated total cost per person broken down:
+   - flights_avg: average round-trip flight cost
    - lodging_per_person: based on the best lodging split for the group
-   - lift_tickets: total lift ticket cost for the trip, accounting for pass discounts (if group has a matching pass, cost = $0 for that pass)
+   - lift_tickets: total lift ticket cost for the trip, accounting for pass discounts
    - misc: estimated food/transport/gear rental ($50-100/day)
    - total: sum of all above
-4. A 5-day sample itinerary (array of { day: number, morning: string, afternoon: string, evening: string })
-5. Any warnings (array of strings, e.g. "Long travel day from Boston", "Limited beginner terrain")
-6. The resort's current snow conditions
+5. Vibe match tags: array of emoji+label strings showing which vibes match (e.g. "🏔️ Ski-In/Ski-Out ✓", "🎉 Après Scene ✓", "✨ Luxury ✓")
+6. A 5-day sample itinerary
+7. Any warnings (e.g. "Long travel day from Boston", "Limited beginner terrain")
+8. Snow conditions from the provided data
+9. Per-guest estimated flight costs as "flightDetailsPerGuest": array of { guestName, origin, estimatedCost }
 
 Return ONLY valid JSON in this exact format:
 {
@@ -129,6 +135,7 @@ Return ONLY valid JSON in this exact format:
       "resortName": "string",
       "matchScore": number,
       "summary": "string",
+      "whyThisResort": "string",
       "costBreakdown": {
         "flights_avg": number,
         "lodging_per_person": number,
@@ -136,21 +143,22 @@ Return ONLY valid JSON in this exact format:
         "misc": number,
         "total": number
       },
+      "vibeMatchTags": ["string"],
       "itinerary": [
         { "day": 1, "morning": "string", "afternoon": "string", "evening": "string" }
       ],
       "warnings": ["string"],
-      "snowConditions": {
-        "snowDepth": number,
-        "recentSnowfall": number
-      },
+      "snowConditions": { "snowDepth": number, "recentSnowfall": number },
       "lodgingRecommendation": {
         "name": "string",
         "type": "string",
         "units": number,
         "pricePerNight": number,
         "costPerPerson": number
-      }
+      },
+      "flightDetailsPerGuest": [
+        { "guestName": "string", "origin": "string", "estimatedCost": number }
+      ]
     }
   ]
 }`;
@@ -171,7 +179,7 @@ Return ONLY valid JSON in this exact format:
 ${(guests || []).map((g: any) => `- ${g.name}: from ${g.origin_city || 'unknown'} (${g.airport_code || 'no airport'}), skill: ${g.skill_level}, budget: $${g.budget_min || '?'}-$${g.budget_max || '?'}`).join('\n')}
 
 ## Available Resorts with Snow Data
-${resortData.resorts.map((r: any) => `- ${r.name} (${r.country}): Pass: ${r.pass.join('/')}, Terrain: ${r.terrain.beginner}%beg/${r.terrain.intermediate}%int/${r.terrain.advanced}%adv/${r.terrain.expert}%exp, Lift ticket: $${r.liftTicket}, Snow depth: ${r.snow?.snowDepth || 0}cm, Recent snow: ${r.snow?.recentSnowfall || 0}cm, Après: ${r.apresScore}/10, Non-skier: ${r.nonSkierScore}/10, Ski-in/out: ${r.skiInOut}, Vibes: ${r.vibeTags.join(', ')}`).join('\n')}
+${resortData.resorts.map((r: any) => `- ${r.name} (${r.country}, ${r.region}): Pass: ${r.pass.join('/')}, Terrain: ${r.terrain.beginner}%beg/${r.terrain.intermediate}%int/${r.terrain.advanced}%adv/${r.terrain.expert}%exp, Lift ticket: $${r.liftTicket}, Snow depth: ${r.snow?.snowDepth || 0}cm, Recent snow: ${r.snow?.recentSnowfall || 0}cm, Après: ${r.apresScore}/10, Non-skier: ${r.nonSkierScore}/10, Ski-in/out: ${r.skiInOut}, Vibes: ${r.vibeTags.join(', ')}`).join('\n')}
 
 ## Lodging Options
 ${Object.entries(lodgingData.lodging || {}).map(([name, data]: [string, any]) => {
@@ -181,7 +189,7 @@ ${Object.entries(lodgingData.lodging || {}).map(([name, data]: [string, any]) =>
 
 ${flightData ? `## Flight Prices\n${JSON.stringify(flightData, null, 2)}` : '## Flights: No flight price data available. Please estimate based on origin cities and resort locations.'}
 
-Please recommend the top 3 resorts that best match this group's needs. Consider budget constraints, skill levels, vibe preferences, pass affiliations, and current snow conditions.`;
+Please recommend the top 3 resorts that best match this group's needs.`;
 
     // 9. Call AI
     const aiResponse = await fetch(AI_GATEWAY_URL, {
@@ -214,7 +222,6 @@ Please recommend the top 3 resorts that best match this group's needs. Consider 
     try {
       recommendations = JSON.parse(content);
     } catch {
-      // Try to extract JSON from markdown code blocks
       const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (jsonMatch) {
         recommendations = JSON.parse(jsonMatch[1]);
@@ -223,7 +230,47 @@ Please recommend the top 3 resorts that best match this group's needs. Consider 
       }
     }
 
-    // 10. Store in database
+    // 10. Enrich recommendations with resort metadata
+    const passTypes = trip.pass_types || [];
+    if (recommendations.recommendations) {
+      recommendations.recommendations = recommendations.recommendations.map((rec: any) => {
+        const resortMeta = resortLookup[rec.resortName];
+        if (resortMeta) {
+          // Add pass coverage
+          const allPasses = ['Ikon', 'Epic'];
+          rec.passCoverage = allPasses.map(p => ({
+            pass: `${p} Pass`,
+            covered: resortMeta.pass.includes(p.toLowerCase()),
+          }));
+
+          // Add terrain breakdown
+          rec.terrainBreakdown = resortMeta.terrain;
+
+          // Add country/region
+          rec.country = resortMeta.country;
+          rec.region = resortMeta.region;
+
+          // Add skiInOut
+          rec.skiInOut = resortMeta.skiInOut;
+        }
+        return rec;
+      });
+
+      // 11. Build flight summary for per-guest table
+      const flightSummary: Record<string, Record<string, number | null>> = {};
+      recommendations.recommendations.forEach((rec: any) => {
+        if (rec.flightDetailsPerGuest) {
+          rec.flightDetailsPerGuest.forEach((fd: any) => {
+            const key = `${fd.guestName} (${fd.origin})`;
+            if (!flightSummary[key]) flightSummary[key] = {};
+            flightSummary[key][rec.resortName] = fd.estimatedCost;
+          });
+        }
+      });
+      recommendations.flightSummary = flightSummary;
+    }
+
+    // 12. Store in database
     const { error: insertError } = await supabase
       .from('recommendations')
       .insert({

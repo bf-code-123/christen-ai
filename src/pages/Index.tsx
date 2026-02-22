@@ -4,12 +4,13 @@ import { Mountain, ArrowRight, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useNavigate } from "react-router-dom";
 import ProgressBar from "@/components/ProgressBar";
 import StepBasics from "@/components/steps/StepBasics";
 import StepBudget from "@/components/steps/StepBudget";
 import StepInvites from "@/components/steps/StepInvites";
 import StepReview from "@/components/steps/StepReview";
-import RecommendationResults from "@/components/RecommendationResults";
+import LoadingAnimation from "@/components/LoadingAnimation";
 import type { DateRange } from "react-day-picker";
 
 const Index = () => {
@@ -18,8 +19,8 @@ const Index = () => {
   const [tripId, setTripId] = useState<string | null>(null);
   const [guestCount, setGuestCount] = useState(0);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [recommendations, setRecommendations] = useState<any>(null);
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   const [basics, setBasics] = useState({
     tripName: "",
@@ -104,32 +105,19 @@ const Index = () => {
   };
 
   const prevStep = () => {
-    if (recommendations) {
-      setRecommendations(null);
-      return;
-    }
     setStep((s) => Math.max(1, s - 1));
   };
 
   const handleGenerate = async () => {
-    if (!tripId) {
-      await saveTrip();
-    } else {
-      await saveTrip();
-    }
-
+    await saveTrip();
     setIsGenerating(true);
     try {
       const { data, error } = await supabase.functions.invoke("generate-recommendations", {
         body: { tripId },
       });
-
       if (error) throw error;
-      setRecommendations(data);
-      toast({
-        title: "🎿 Recommendations ready!",
-        description: "We found the best resorts for your group.",
-      });
+      // Navigate to results page
+      navigate(`/results/${tripId}`);
     } catch (err: any) {
       console.error("Generation error:", err);
       toast({
@@ -137,10 +125,13 @@ const Index = () => {
         description: err.message || "Please try again.",
         variant: "destructive",
       });
-    } finally {
       setIsGenerating(false);
     }
   };
+
+  if (isGenerating) {
+    return <LoadingAnimation />;
+  }
 
   if (!started) {
     return (
@@ -175,26 +166,6 @@ const Index = () => {
             <ArrowRight className="h-5 w-5" />
           </Button>
         </motion.div>
-      </div>
-    );
-  }
-
-  if (recommendations) {
-    return (
-      <div className="min-h-screen snow-gradient">
-        <div className="max-w-4xl mx-auto px-4 py-8">
-          <div className="flex items-center justify-center gap-2 mb-8">
-            <Mountain className="h-5 w-5 text-primary" />
-            <span className="text-sm font-bold tracking-wider text-primary uppercase">
-              PowderPlan
-            </span>
-          </div>
-          <RecommendationResults
-            data={recommendations}
-            tripName={basics.tripName}
-            onBack={() => setRecommendations(null)}
-          />
-        </div>
       </div>
     );
   }
