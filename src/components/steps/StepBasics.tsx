@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { Switch } from "@/components/ui/switch";
+import { Slider } from "@/components/ui/slider";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import type { DateRange } from "react-day-picker";
@@ -18,12 +19,11 @@ const flexOptions = [
 ];
 
 const geographies = ["North America", "Europe", "Japan/Asia", "No Preference"];
-const vibes = [
-  { id: "party", emoji: "🎉", label: "Party Town", desc: "Nightlife, big resort towns" },
-  { id: "ski-in", emoji: "🏔️", label: "Ski-In/Ski-Out", desc: "Pure mountain access" },
-  { id: "budget", emoji: "💰", label: "Budget Trip", desc: "Max value, less frills" },
-  { id: "relaxed", emoji: "🧘", label: "Relaxed & Scenic", desc: "Cozy, quieter resorts" },
-  { id: "expert", emoji: "🏆", label: "Expert Terrain", desc: "Gnarly runs, backcountry" },
+
+const vibeSliders = [
+  { key: "vibeEnergy" as const, left: "🧘 Relaxed", right: "🎉 Party" },
+  { key: "vibeBudget" as const, left: "💰 Value", right: "✨ Luxury" },
+  { key: "vibeSkill" as const, left: "🟢 Beginner Friendly", right: "🏆 Experts Only" },
 ];
 
 interface StepBasicsProps {
@@ -32,7 +32,10 @@ interface StepBasicsProps {
     dateRange: DateRange | undefined;
     groupSize: number;
     geography: string[];
-    vibe: string;
+    vibeEnergy: number;
+    vibeBudget: number;
+    vibeSkill: number;
+    skiInOut: boolean;
     datesFlexible: boolean;
     flexDays: number;
   };
@@ -203,26 +206,38 @@ const StepBasics = ({ data, onChange }: StepBasicsProps) => {
         </div>
       </div>
 
-      {/* Vibe */}
-      <div className="space-y-3">
+      {/* Trip Vibe Sliders */}
+      <div className="space-y-5">
         <label className="text-sm font-medium text-foreground">Trip Vibe</label>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {vibes.map((v) => (
-            <button
-              key={v.id}
-              onClick={() => onChange({ vibe: v.id })}
-              className={cn(
-                "p-4 rounded-xl text-left transition-all",
-                data.vibe === v.id
-                  ? "glass-strong glow-border ring-1 ring-primary/50"
-                  : "glass hover:bg-card/80"
-              )}
-            >
-              <div className="text-2xl mb-2">{v.emoji}</div>
-              <div className="font-semibold text-sm text-foreground">{v.label}</div>
-              <div className="text-xs text-muted-foreground mt-1">{v.desc}</div>
-            </button>
-          ))}
+        {vibeSliders.map((s) => (
+          <div key={s.key} className="glass rounded-xl p-4 space-y-3">
+            <div className="flex justify-between text-xs font-medium">
+              <span className="text-muted-foreground">{s.left}</span>
+              <span className="text-muted-foreground">{s.right}</span>
+            </div>
+            <Slider
+              min={0}
+              max={100}
+              step={1}
+              value={[data[s.key]]}
+              onValueChange={([v]) => onChange({ [s.key]: v })}
+            />
+          </div>
+        ))}
+
+        {/* Ski-In/Ski-Out Toggle */}
+        <div className="glass rounded-xl p-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🏔️</span>
+            <div>
+              <div className="text-sm font-medium text-foreground">Ski-In / Ski-Out</div>
+              <div className="text-xs text-muted-foreground">Pure mountain access preferred</div>
+            </div>
+          </div>
+          <Switch
+            checked={data.skiInOut}
+            onCheckedChange={(checked) => onChange({ skiInOut: checked })}
+          />
         </div>
       </div>
     </motion.div>

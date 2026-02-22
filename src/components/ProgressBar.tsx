@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 
-const steps = ["Trip Basics", "Skill Mix", "Budget", "Invites", "Review"];
+const steps = ["Trip Basics", "Budget", "Invites", "Review"];
 
 interface ProgressBarProps {
   currentStep: number;

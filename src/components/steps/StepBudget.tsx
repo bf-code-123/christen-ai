@@ -3,7 +3,7 @@ import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 
 const passTypes = ["Ikon Pass", "Epic Pass", "Indy Pass", "No Pass / Lift Tickets"];
-const lodgingOptions = ["Slopeside Hotel", "Vacation Rental", "No Preference"];
+const lodgingOptions = ["Hotel", "Airbnb"];
 
 interface StepBudgetProps {
   data: {
@@ -107,7 +107,7 @@ const StepBudget = ({ data, onChange }: StepBudgetProps) => {
       {/* Lodging */}
       <div className="space-y-3">
         <label className="text-sm font-medium text-foreground">Lodging Preference</label>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           {lodgingOptions.map((opt) => (
             <button
               key={opt}

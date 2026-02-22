@@ -6,7 +6,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import ProgressBar from "@/components/ProgressBar";
 import StepBasics from "@/components/steps/StepBasics";
-import StepSkills from "@/components/steps/StepSkills";
 import StepBudget from "@/components/steps/StepBudget";
 import StepInvites from "@/components/steps/StepInvites";
 import StepReview from "@/components/steps/StepReview";
@@ -24,22 +23,19 @@ const Index = () => {
     dateRange: undefined as DateRange | undefined,
     groupSize: 4,
     geography: [] as string[],
-    vibe: "",
+    vibeEnergy: 50,
+    vibeBudget: 50,
+    vibeSkill: 50,
+    skiInOut: false,
     datesFlexible: false,
     flexDays: 2,
-  });
-
-  const [skills, setSkills] = useState({
-    skillRange: [1, 2] as [number, number],
-    hasNonSkiers: false,
-    nonSkierImportance: 50,
   });
 
   const [budget, setBudget] = useState({
     budgetType: "per_person" as "per_person" | "total",
     budgetAmount: 2000,
     passTypes: [] as string[],
-    lodging: "No Preference",
+    lodging: "Hotel",
   });
 
   // Fetch guest count for review
@@ -62,20 +58,25 @@ const Index = () => {
     return () => { supabase.removeChannel(channel); };
   }, [tripId]);
 
-  const skillLabels = ["beginner", "intermediate", "advanced", "expert"];
-
   const saveTrip = async () => {
+    const skillLabel = (v: number) => {
+      if (v <= 25) return "beginner";
+      if (v <= 50) return "intermediate";
+      if (v <= 75) return "advanced";
+      return "expert";
+    };
+
     const tripData = {
       trip_name: basics.tripName || "Untitled Trip",
       date_start: basics.dateRange?.from?.toISOString().split("T")[0] || null,
       date_end: basics.dateRange?.to?.toISOString().split("T")[0] || null,
       group_size: basics.groupSize,
       geography: basics.geography,
-      vibe: basics.vibe,
-      skill_min: skillLabels[skills.skillRange[0]],
-      skill_max: skillLabels[skills.skillRange[1]],
-      has_non_skiers: skills.hasNonSkiers,
-      non_skier_importance: skills.nonSkierImportance,
+      vibe: `energy:${basics.vibeEnergy},budget:${basics.vibeBudget},skill:${basics.vibeSkill},ski-in-out:${basics.skiInOut}`,
+      skill_min: "beginner",
+      skill_max: skillLabel(basics.vibeSkill),
+      has_non_skiers: false,
+      non_skier_importance: 0,
       budget_type: budget.budgetType,
       budget_amount: budget.budgetAmount,
       pass_types: budget.passTypes,
@@ -91,13 +92,12 @@ const Index = () => {
   };
 
   const nextStep = async () => {
-    if (step === 3 && !tripId) {
-      // Save trip before going to invites
+    if (step === 2 && !tripId) {
       await saveTrip();
-    } else if (step <= 3) {
+    } else if (step <= 2) {
       await saveTrip();
     }
-    setStep((s) => Math.min(5, s + 1));
+    setStep((s) => Math.min(4, s + 1));
   };
 
   const prevStep = () => setStep((s) => Math.max(1, s - 1));
@@ -168,27 +168,19 @@ const Index = () => {
             />
           )}
           {step === 2 && (
-            <StepSkills
-              key="skills"
-              data={skills}
-              onChange={(d) => setSkills((p) => ({ ...p, ...d }))}
-            />
-          )}
-          {step === 3 && (
             <StepBudget
               key="budget"
               data={budget}
               onChange={(d) => setBudget((p) => ({ ...p, ...d }))}
             />
           )}
-          {step === 4 && (
+          {step === 3 && (
             <StepInvites key="invites" tripId={tripId} groupSize={basics.groupSize} />
           )}
-          {step === 5 && (
+          {step === 4 && (
             <StepReview
               key="review"
               basics={basics}
-              skills={skills}
               budget={budget}
               guestCount={guestCount}
               onGoToStep={setStep}
@@ -207,9 +199,9 @@ const Index = () => {
           >
             <ArrowLeft className="h-4 w-4" /> Back
           </Button>
-          {step < 5 && (
+          {step < 4 && (
             <Button onClick={nextStep} className="gap-2">
-              {step === 3 ? "Save & Continue" : "Next"}
+              {step === 2 ? "Save & Continue" : "Next"}
               <ArrowRight className="h-4 w-4" />
             </Button>
           )}
