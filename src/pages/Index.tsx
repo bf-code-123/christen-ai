@@ -9,6 +9,7 @@ import StepBasics from "@/components/steps/StepBasics";
 import StepBudget from "@/components/steps/StepBudget";
 import StepInvites from "@/components/steps/StepInvites";
 import StepReview from "@/components/steps/StepReview";
+import RecommendationResults from "@/components/RecommendationResults";
 import type { DateRange } from "react-day-picker";
 
 const Index = () => {
@@ -16,6 +17,8 @@ const Index = () => {
   const [step, setStep] = useState(1);
   const [tripId, setTripId] = useState<string | null>(null);
   const [guestCount, setGuestCount] = useState(0);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [recommendations, setRecommendations] = useState<any>(null);
   const { toast } = useToast();
 
   const [basics, setBasics] = useState({
@@ -100,13 +103,43 @@ const Index = () => {
     setStep((s) => Math.min(4, s + 1));
   };
 
-  const prevStep = () => setStep((s) => Math.max(1, s - 1));
+  const prevStep = () => {
+    if (recommendations) {
+      setRecommendations(null);
+      return;
+    }
+    setStep((s) => Math.max(1, s - 1));
+  };
 
-  const handleGenerate = () => {
-    toast({
-      title: "🎿 Generating recommendations...",
-      description: "This feature is coming soon! Your trip data has been saved.",
-    });
+  const handleGenerate = async () => {
+    if (!tripId) {
+      await saveTrip();
+    } else {
+      await saveTrip();
+    }
+
+    setIsGenerating(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("generate-recommendations", {
+        body: { tripId },
+      });
+
+      if (error) throw error;
+      setRecommendations(data);
+      toast({
+        title: "🎿 Recommendations ready!",
+        description: "We found the best resorts for your group.",
+      });
+    } catch (err: any) {
+      console.error("Generation error:", err);
+      toast({
+        title: "Error generating recommendations",
+        description: err.message || "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   if (!started) {
@@ -146,10 +179,29 @@ const Index = () => {
     );
   }
 
+  if (recommendations) {
+    return (
+      <div className="min-h-screen snow-gradient">
+        <div className="max-w-4xl mx-auto px-4 py-8">
+          <div className="flex items-center justify-center gap-2 mb-8">
+            <Mountain className="h-5 w-5 text-primary" />
+            <span className="text-sm font-bold tracking-wider text-primary uppercase">
+              PowderPlan
+            </span>
+          </div>
+          <RecommendationResults
+            data={recommendations}
+            tripName={basics.tripName}
+            onBack={() => setRecommendations(null)}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen snow-gradient">
       <div className="max-w-2xl mx-auto px-4 py-8">
-        {/* Header */}
         <div className="flex items-center justify-center gap-2 mb-8">
           <Mountain className="h-5 w-5 text-primary" />
           <span className="text-sm font-bold tracking-wider text-primary uppercase">
@@ -185,11 +237,11 @@ const Index = () => {
               guestCount={guestCount}
               onGoToStep={setStep}
               onGenerate={handleGenerate}
+              isGenerating={isGenerating}
             />
           )}
         </AnimatePresence>
 
-        {/* Navigation */}
         <div className="flex justify-between mt-10">
           <Button
             variant="outline"

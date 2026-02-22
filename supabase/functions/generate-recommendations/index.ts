@@ -1,0 +1,248 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
+const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
+
+serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+    if (!LOVABLE_API_KEY) throw new Error('LOVABLE_API_KEY is not configured');
+
+    const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
+    const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_PUBLISHABLE_KEY') || Deno.env.get('SUPABASE_ANON_KEY');
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) throw new Error('Supabase config missing');
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const { tripId } = await req.json();
+    if (!tripId) throw new Error('tripId is required');
+
+    // 1. Fetch trip data
+    const { data: trip, error: tripError } = await supabase
+      .from('trips')
+      .select('*')
+      .eq('id', tripId)
+      .single();
+    if (tripError || !trip) throw new Error(`Trip not found: ${tripError?.message}`);
+
+    // 2. Fetch guests
+    const { data: guests } = await supabase
+      .from('guests')
+      .select('*')
+      .eq('trip_id', tripId);
+
+    // 3. Fetch resort data
+    const resortRes = await fetch(`${SUPABASE_URL}/functions/v1/fetch-resort-data`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
+      body: JSON.stringify({ regions: trip.geography }),
+    });
+    const resortData = await resortRes.json();
+    if (!resortData.resorts) throw new Error('Failed to fetch resort data');
+
+    // 4. Calculate trip duration
+    let nights = 5;
+    if (trip.date_start && trip.date_end) {
+      const start = new Date(trip.date_start);
+      const end = new Date(trip.date_end);
+      nights = Math.max(1, Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
+    }
+
+    // 5. Fetch lodging data
+    const lodgingRes = await fetch(`${SUPABASE_URL}/functions/v1/fetch-lodging`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
+      body: JSON.stringify({
+        resorts: resortData.resorts,
+        groupSize: trip.group_size,
+        lodgingPreference: trip.lodging_preference || 'Hotel',
+        nights,
+      }),
+    });
+    const lodgingData = await lodgingRes.json();
+
+    // 6. Attempt to fetch flight data (may not be available if Amadeus isn't configured)
+    let flightData = null;
+    try {
+      const origins = (guests || [])
+        .filter((g: any) => g.airport_code || g.origin_city)
+        .map((g: any) => g.airport_code || g.origin_city);
+
+      if (origins.length > 0 && trip.date_start && trip.date_end) {
+        const flightRes = await fetch(`${SUPABASE_URL}/functions/v1/fetch-flights`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
+          body: JSON.stringify({
+            origins,
+            departureDate: trip.date_start,
+            returnDate: trip.date_end,
+            resorts: resortData.resorts.map((r: any) => ({ name: r.name, nearestAirport: r.nearestAirport })),
+          }),
+        });
+        if (flightRes.ok) {
+          flightData = await flightRes.json();
+        }
+      }
+    } catch {
+      // Flight data is optional
+      console.log('Flight data not available, proceeding without it');
+    }
+
+    // 7. Parse vibe string
+    const vibeObj: Record<string, string> = {};
+    if (trip.vibe) {
+      trip.vibe.split(',').forEach((part: string) => {
+        const [key, val] = part.split(':');
+        if (key && val) vibeObj[key.trim()] = val.trim();
+      });
+    }
+
+    // 8. Build AI prompt
+    const systemPrompt = `You are an expert ski trip planner. Given a group's preferences, budget, skill levels, origin cities, pass types, vibe preferences, and real-time resort data including snow conditions, flight prices, and lodging options, recommend the top 3 ski resorts.
+
+For each resort, provide:
+1. A match score (0-100) reflecting how well it fits THIS specific group
+2. A 2-sentence "why this resort fits" summary tailored to THIS group's specific inputs
+3. Estimated total cost per person broken down:
+   - flights_avg: average round-trip flight cost (estimate $300-800 domestic, $800-1500 international if no flight data available)
+   - lodging_per_person: based on the best lodging split for the group
+   - lift_tickets: total lift ticket cost for the trip, accounting for pass discounts (if group has a matching pass, cost = $0 for that pass)
+   - misc: estimated food/transport/gear rental ($50-100/day)
+   - total: sum of all above
+4. A 5-day sample itinerary (array of { day: number, morning: string, afternoon: string, evening: string })
+5. Any warnings (array of strings, e.g. "Long travel day from Boston", "Limited beginner terrain")
+6. The resort's current snow conditions
+
+Return ONLY valid JSON in this exact format:
+{
+  "recommendations": [
+    {
+      "resortName": "string",
+      "matchScore": number,
+      "summary": "string",
+      "costBreakdown": {
+        "flights_avg": number,
+        "lodging_per_person": number,
+        "lift_tickets": number,
+        "misc": number,
+        "total": number
+      },
+      "itinerary": [
+        { "day": 1, "morning": "string", "afternoon": "string", "evening": "string" }
+      ],
+      "warnings": ["string"],
+      "snowConditions": {
+        "snowDepth": number,
+        "recentSnowfall": number
+      },
+      "lodgingRecommendation": {
+        "name": "string",
+        "type": "string",
+        "units": number,
+        "pricePerNight": number,
+        "costPerPerson": number
+      }
+    }
+  ]
+}`;
+
+    const userMessage = `
+## Trip Details
+- Trip Name: ${trip.trip_name}
+- Dates: ${trip.date_start || 'flexible'} to ${trip.date_end || 'flexible'} (${nights} nights)
+- Group Size: ${trip.group_size} people
+- Geography Preference: ${(trip.geography || []).join(', ') || 'No preference'}
+- Vibe: Energy ${vibeObj.energy || '50'}/100 (0=relaxed, 100=party), Budget ${vibeObj.budget || '50'}/100 (0=value, 100=luxury), Skill ${vibeObj.skill || '50'}/100 (0=beginner, 100=expert), Ski-In/Out: ${vibeObj['ski-in-out'] || 'false'}
+- Skill Range: ${trip.skill_min} to ${trip.skill_max}
+- Budget: $${trip.budget_amount} ${trip.budget_type === 'per_person' ? 'per person' : 'total for group'}
+- Pass Types: ${(trip.pass_types || []).join(', ') || 'None'}
+- Lodging Preference: ${trip.lodging_preference || 'No preference'}
+
+## Guests (${(guests || []).length} submitted)
+${(guests || []).map((g: any) => `- ${g.name}: from ${g.origin_city || 'unknown'} (${g.airport_code || 'no airport'}), skill: ${g.skill_level}, budget: $${g.budget_min || '?'}-$${g.budget_max || '?'}`).join('\n')}
+
+## Available Resorts with Snow Data
+${resortData.resorts.map((r: any) => `- ${r.name} (${r.country}): Pass: ${r.pass.join('/')}, Terrain: ${r.terrain.beginner}%beg/${r.terrain.intermediate}%int/${r.terrain.advanced}%adv/${r.terrain.expert}%exp, Lift ticket: $${r.liftTicket}, Snow depth: ${r.snow?.snowDepth || 0}cm, Recent snow: ${r.snow?.recentSnowfall || 0}cm, Après: ${r.apresScore}/10, Non-skier: ${r.nonSkierScore}/10, Ski-in/out: ${r.skiInOut}, Vibes: ${r.vibeTags.join(', ')}`).join('\n')}
+
+## Lodging Options
+${Object.entries(lodgingData.lodging || {}).map(([name, data]: [string, any]) => {
+  const best = data.bestSplits?.[0];
+  return best ? `- ${name}: Best option: ${best.option.name} (${best.option.type}, $${best.option.pricePerNight}/night, ${best.units} units, $${best.costPerPerson}/person total)` : `- ${name}: No lodging data`;
+}).join('\n')}
+
+${flightData ? `## Flight Prices\n${JSON.stringify(flightData, null, 2)}` : '## Flights: No flight price data available. Please estimate based on origin cities and resort locations.'}
+
+Please recommend the top 3 resorts that best match this group's needs. Consider budget constraints, skill levels, vibe preferences, pass affiliations, and current snow conditions.`;
+
+    // 9. Call AI
+    const aiResponse = await fetch(AI_GATEWAY_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-pro',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage },
+        ],
+        temperature: 0.7,
+        response_format: { type: "json_object" },
+      }),
+    });
+
+    if (!aiResponse.ok) {
+      const errBody = await aiResponse.text();
+      throw new Error(`AI API call failed [${aiResponse.status}]: ${errBody}`);
+    }
+
+    const aiData = await aiResponse.json();
+    const content = aiData.choices?.[0]?.message?.content;
+    if (!content) throw new Error('No content in AI response');
+
+    let recommendations;
+    try {
+      recommendations = JSON.parse(content);
+    } catch {
+      // Try to extract JSON from markdown code blocks
+      const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        recommendations = JSON.parse(jsonMatch[1]);
+      } else {
+        throw new Error('Failed to parse AI response as JSON');
+      }
+    }
+
+    // 10. Store in database
+    const { error: insertError } = await supabase
+      .from('recommendations')
+      .insert({
+        trip_id: tripId,
+        results: recommendations,
+      });
+    if (insertError) {
+      console.error('Failed to store recommendations:', insertError);
+    }
+
+    return new Response(JSON.stringify(recommendations), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('generate-recommendations error:', error);
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    return new Response(JSON.stringify({ error: msg }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+});

@@ -14,6 +14,39 @@ export type Database = {
   }
   public: {
     Tables: {
+      flight_cache: {
+        Row: {
+          cached_at: string
+          currency: string | null
+          departure_date: string
+          destination_airport: string
+          id: string
+          origin_airport: string
+          price: number | null
+          return_date: string
+        }
+        Insert: {
+          cached_at?: string
+          currency?: string | null
+          departure_date: string
+          destination_airport: string
+          id?: string
+          origin_airport: string
+          price?: number | null
+          return_date: string
+        }
+        Update: {
+          cached_at?: string
+          currency?: string | null
+          departure_date?: string
+          destination_airport?: string
+          id?: string
+          origin_airport?: string
+          price?: number | null
+          return_date?: string
+        }
+        Relationships: []
+      }
       guests: {
         Row: {
           airport_code: string | null
@@ -57,6 +90,35 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "guests_trip_id_fkey"
+            columns: ["trip_id"]
+            isOneToOne: false
+            referencedRelation: "trips"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recommendations: {
+        Row: {
+          created_at: string
+          id: string
+          results: Json
+          trip_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          results: Json
+          trip_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          results?: Json
+          trip_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recommendations_trip_id_fkey"
             columns: ["trip_id"]
             isOneToOne: false
             referencedRelation: "trips"
