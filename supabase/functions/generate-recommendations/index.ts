@@ -75,7 +75,7 @@ serve(async (req) => {
     try {
       const origins = (guests || [])
         .filter((g: any) => g.airport_code || g.origin_city)
-        .map((g: any) => g.airport_code || g.origin_city);
+        .map((g: any) => ({ airport: g.airport_code || g.origin_city, guestName: g.name }));
 
       if (origins.length > 0 && trip.date_start && trip.date_end) {
         const flightRes = await fetch(`${SUPABASE_URL}/functions/v1/fetch-flights`, {
@@ -85,7 +85,7 @@ serve(async (req) => {
             origins,
             departureDate: trip.date_start,
             returnDate: trip.date_end,
-            resorts: resortData.resorts.map((r: any) => ({ name: r.name, nearestAirport: r.nearestAirport })),
+            resorts: resortData.resorts.map((r: any) => r.name),
           }),
         });
         if (flightRes.ok) {
