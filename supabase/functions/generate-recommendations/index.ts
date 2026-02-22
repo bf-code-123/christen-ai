@@ -314,8 +314,14 @@ Please recommend the top 3 resorts that best match this group's needs.`;
     });
   } catch (error) {
     console.error('generate-recommendations error:', error);
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    return new Response(JSON.stringify({ error: msg }), {
+    const msg = error instanceof Error ? error.message : '';
+    // Only expose safe, known error messages
+    const safeMessages: Record<string, string> = {
+      'tripId is required': 'Trip ID is required',
+      'Forbidden: you do not own this trip': 'Access denied',
+    };
+    const safeMsg = safeMessages[msg] || 'Failed to generate recommendations. Please try again.';
+    return new Response(JSON.stringify({ error: safeMsg }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

@@ -217,7 +217,7 @@ Deno.serve(async (req) => {
   } catch (err) {
     console.error("fetch-flights error:", err);
     return new Response(
-      JSON.stringify({ error: err.message }),
+      JSON.stringify({ error: "Failed to fetch flight data. Please try again." }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
