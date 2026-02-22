@@ -1,0 +1,1 @@
+ALTER TABLE public.flight_cache ADD CONSTRAINT flight_cache_route_date_unique UNIQUE (origin_airport, destination_airport, departure_date, return_date);
