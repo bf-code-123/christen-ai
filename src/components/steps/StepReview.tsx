@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Edit2, AlertTriangle, Sparkles } from "lucide-react";
+import { Edit2, AlertTriangle, Sparkles, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
@@ -24,6 +24,7 @@ interface StepReviewProps {
   guestCount: number;
   onGoToStep: (step: number) => void;
   onGenerate: () => void;
+  isGenerating?: boolean;
 }
 
 const Section = ({
@@ -57,7 +58,7 @@ const vibeLabel = (value: number, left: string, right: string) => {
   return "Balanced";
 };
 
-const StepReview = ({ basics, budget, guestCount, onGoToStep, onGenerate }: StepReviewProps) => {
+const StepReview = ({ basics, budget, guestCount, onGoToStep, onGenerate, isGenerating }: StepReviewProps) => {
   const allSubmitted = guestCount >= basics.groupSize;
 
   return (
@@ -116,11 +117,21 @@ const StepReview = ({ basics, budget, guestCount, onGoToStep, onGenerate }: Step
 
       <Button
         onClick={onGenerate}
+        disabled={isGenerating}
         size="lg"
         className="w-full h-14 text-base font-semibold gap-2 animate-pulse-glow"
       >
-        <Sparkles className="h-5 w-5" />
-        Generate Resort Recommendations
+        {isGenerating ? (
+          <>
+            <Loader2 className="h-5 w-5 animate-spin" />
+            Analyzing resorts & building your plan...
+          </>
+        ) : (
+          <>
+            <Sparkles className="h-5 w-5" />
+            Generate Resort Recommendations
+          </>
+        )}
       </Button>
     </motion.div>
   );
