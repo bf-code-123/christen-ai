@@ -215,7 +215,48 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_public_guests: {
+        Args: { p_trip_id: string }
+        Returns: {
+          airport_code: string
+          budget_max: number
+          budget_min: number
+          id: string
+          name: string
+          origin_city: string
+          skill_level: string
+          status: string
+        }[]
+      }
+      get_public_recommendations: {
+        Args: { p_trip_id: string }
+        Returns: {
+          created_at: string
+          id: string
+          results: Json
+        }[]
+      }
+      get_public_trip: {
+        Args: { p_trip_id: string }
+        Returns: {
+          budget_amount: number
+          budget_type: string
+          date_end: string
+          date_start: string
+          geography: string[]
+          group_size: number
+          has_non_skiers: boolean
+          id: string
+          lodging_preference: string
+          non_skier_importance: number
+          organizer_name: string
+          pass_types: string[]
+          skill_max: string
+          skill_min: string
+          trip_name: string
+          vibe: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

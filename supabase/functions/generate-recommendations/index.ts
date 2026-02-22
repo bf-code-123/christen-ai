@@ -19,20 +19,48 @@ serve(async (req) => {
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
     const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_PUBLISHABLE_KEY') || Deno.env.get('SUPABASE_ANON_KEY');
-    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) throw new Error('Supabase config missing');
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !SUPABASE_SERVICE_ROLE_KEY) throw new Error('Supabase config missing');
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    // Authenticate the caller
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const authClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    const token = authHeader.replace('Bearer ', '');
+    const { data: claimsData, error: claimsError } = await authClient.auth.getClaims(token);
+    if (claimsError || !claimsData?.claims) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const userId = claimsData.claims.sub;
+
+    // Use service role for data access (RLS is now owner-only)
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     const { tripId } = await req.json();
     if (!tripId) throw new Error('tripId is required');
 
-    // 1. Fetch trip data
+    // 1. Fetch trip data and verify ownership
     const { data: trip, error: tripError } = await supabase
       .from('trips')
       .select('*')
       .eq('id', tripId)
       .single();
     if (tripError || !trip) throw new Error(`Trip not found: ${tripError?.message}`);
+
+    if (trip.user_id !== userId) {
+      return new Response(JSON.stringify({ error: 'Forbidden: you do not own this trip' }), {
+        status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // 2. Fetch guests
     const { data: guests } = await supabase
