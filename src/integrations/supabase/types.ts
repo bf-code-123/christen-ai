@@ -97,6 +97,27 @@ export type Database = {
           },
         ]
       }
+      profiles: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       recommendations: {
         Row: {
           created_at: string
@@ -144,6 +165,7 @@ export type Database = {
           skill_max: string | null
           skill_min: string | null
           trip_name: string
+          user_id: string | null
           vibe: string | null
         }
         Insert: {
@@ -163,6 +185,7 @@ export type Database = {
           skill_max?: string | null
           skill_min?: string | null
           trip_name: string
+          user_id?: string | null
           vibe?: string | null
         }
         Update: {
@@ -182,6 +205,7 @@ export type Database = {
           skill_max?: string | null
           skill_min?: string | null
           trip_name?: string
+          user_id?: string | null
           vibe?: string | null
         }
         Relationships: []
