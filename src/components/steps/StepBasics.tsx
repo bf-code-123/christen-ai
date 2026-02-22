@@ -1,12 +1,21 @@
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { Calendar, Minus, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+import { Switch } from "@/components/ui/switch";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import type { DateRange } from "react-day-picker";
+
+const flexOptions = [
+  { value: 1, label: "± 1 day" },
+  { value: 2, label: "± 2 days" },
+  { value: 3, label: "± 3 days" },
+  { value: 5, label: "± 5 days" },
+  { value: 7, label: "± 1 week" },
+];
 
 const geographies = ["North America", "Europe", "Japan/Asia", "No Preference"];
 const vibes = [
@@ -24,6 +33,8 @@ interface StepBasicsProps {
     groupSize: number;
     geography: string[];
     vibe: string;
+    datesFlexible: boolean;
+    flexDays: number;
   };
   onChange: (data: Partial<StepBasicsProps["data"]>) => void;
 }
@@ -103,6 +114,43 @@ const StepBasics = ({ data, onChange }: StepBasicsProps) => {
             />
           </PopoverContent>
         </Popover>
+
+        {/* Flexible Dates Toggle */}
+        <div className="flex items-center gap-3 mt-3">
+          <Switch
+            checked={data.datesFlexible}
+            onCheckedChange={(checked) => onChange({ datesFlexible: checked })}
+          />
+          <span className="text-sm text-muted-foreground">Travel dates are flexible</span>
+        </div>
+
+        <AnimatePresence>
+          {data.datesFlexible && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="flex flex-wrap gap-2 mt-3">
+                {flexOptions.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => onChange({ flexDays: opt.value })}
+                    className={cn(
+                      "px-4 py-2 rounded-full text-sm font-medium transition-all",
+                      data.flexDays === opt.value
+                        ? "bg-primary text-primary-foreground shadow-lg"
+                        : "glass text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Group Size */}

@@ -25,6 +25,8 @@ const Index = () => {
     groupSize: 4,
     geography: [] as string[],
     vibe: "",
+    datesFlexible: false,
+    flexDays: 2,
   });
 
   const [skills, setSkills] = useState({
