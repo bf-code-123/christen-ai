@@ -231,17 +231,25 @@ async function fetchSnowData(
 ): Promise<Record<string, SnowData>> {
   const snowData: Record<string, SnowData> = {};
 
-  const batchSize = 10;
-  for (let i = 0; i < resorts.length; i += batchSize) {
-    const batch = resorts.slice(i, i + batchSize);
-    const promises = batch.map(async (resort) => {
+  // Process resorts sequentially with small delays to avoid Open-Meteo 429 rate limits
+  for (let i = 0; i < resorts.length; i++) {
+    const resort = resorts[i];
+    try {
       if (mode === "historical" && dateStart && dateEnd) {
         snowData[resort.name] = await fetchHistoricalSnowData(resort, dateStart, dateEnd);
       } else {
         snowData[resort.name] = await fetchCurrentSnowData(resort);
       }
-    });
-    await Promise.all(promises);
+    } catch (err) {
+      console.error(`Snow fetch failed for ${resort.name}:`, err);
+      snowData[resort.name] = mode === "historical"
+        ? { isHistorical: true, historicalSnowDepth: 0, historicalSnowfall: 0 }
+        : { isHistorical: false, currentSnowDepth: 0, last24hrSnowfall: 0, last7daysSnowfall: 0, seasonTotalSnowfall: 0 };
+    }
+    // Wait 300ms between each resort to respect Open-Meteo free tier rate limits
+    if (i < resorts.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
   }
 
   return snowData;
