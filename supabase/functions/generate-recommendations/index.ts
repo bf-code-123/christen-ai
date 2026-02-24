@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { z } from "https://esm.sh/zod@3.23.8";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -45,8 +46,16 @@ serve(async (req) => {
     // Use service role for data access (RLS is now owner-only)
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    const { tripId } = await req.json();
-    if (!tripId) throw new Error('tripId is required');
+    const RequestSchema = z.object({
+      tripId: z.string().uuid('Invalid trip ID format'),
+    });
+    const parseResult = RequestSchema.safeParse(await req.json());
+    if (!parseResult.success) {
+      return new Response(JSON.stringify({ error: 'Invalid request: trip ID must be a valid UUID' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const { tripId } = parseResult.data;
 
     // 1. Fetch trip data and verify ownership
     const { data: trip, error: tripError } = await supabase

@@ -38,16 +38,33 @@ const GuestInvite = () => {
   }, [tripId]);
 
   const handleSubmit = async () => {
-    if (!form.name.trim() || !tripId) return;
+    if (!tripId) return;
+
+    // Validate inputs
+    const name = form.name.trim().slice(0, 100);
+    if (!name) return;
+
+    const originCity = form.originCity.trim().slice(0, 100) || null;
+    const airportCode = form.airportCode.trim().toUpperCase();
+    const validAirport = /^[A-Z]{3,4}$/.test(airportCode) ? airportCode : null;
+    const notes = form.notes.trim().slice(0, 500) || null;
+
+    // Validate tripId is UUID format
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tripId)) return;
+
+    // Ensure budget range is logical
+    const budgetMin = Math.max(0, Math.min(form.budgetMin, 100000));
+    const budgetMax = Math.max(budgetMin, Math.min(form.budgetMax, 100000));
+
     await supabase.from("guests").insert({
       trip_id: tripId,
-      name: form.name.trim(),
-      origin_city: form.originCity.trim() || null,
-      airport_code: form.airportCode.trim() || null,
+      name,
+      origin_city: originCity,
+      airport_code: validAirport,
       skill_level: skillLevels[form.skillLevel].toLowerCase(),
-      budget_min: form.budgetMin,
-      budget_max: form.budgetMax,
-      notes: form.notes.trim() || null,
+      budget_min: budgetMin,
+      budget_max: budgetMax,
+      notes,
       status: "done",
     });
     setSubmitted(true);
