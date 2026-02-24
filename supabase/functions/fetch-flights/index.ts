@@ -1,4 +1,3 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { z } from "https://esm.sh/zod@3.23.8";
 
 const corsHeaders = {
@@ -13,7 +12,7 @@ const RESORT_AIRPORTS: Record<string, string> = {
   "Whistler Blackcomb": "YVR", "Vail": "DEN", "Park City": "SLC",
   "Jackson Hole": "JAC", "Telluride": "MTJ", "Mammoth Mountain": "MMH",
   "Steamboat": "HDN", "Stowe": "BTV", "Sunday River": "PWM",
-  "Killington": "BTV", "Big Sky": "BZN", "Taos": "ABQ",
+  "Killington": "BTV", "Big Sky": "BZN", "Taos Ski Valley": "ABQ",
   "Alta": "SLC", "Snowbird": "SLC", "Arapahoe Basin": "DEN",
   "Banff Sunshine": "YYC", "Lake Louise": "YYC",
   "Mont-Tremblant": "YUL", "Revelstoke": "YLW",
@@ -23,7 +22,7 @@ const RESORT_AIRPORTS: Record<string, string> = {
   "Winter Park": "DEN",
   // Europe
   "Chamonix": "GVA", "Verbier": "GVA", "Zermatt": "GVA",
-  "Val d'Isere": "GVA", "Courchevel": "GVA", "St. Anton": "INN",
+  "Val d'Isère": "GVA", "Courchevel": "GVA", "St. Anton": "INN",
   "Kitzbühel": "INN", "Innsbruck/Axamer Lizum": "INN",
   "Axamer Lizum": "INN",
   "Les Arcs": "GVA", "Tignes": "GVA",
@@ -179,29 +178,9 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Validate JWT authentication
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    // No JWT validation needed — this function is called server-side by generate-recommendations,
+    // which already authenticates the user. Similar to fetch-resort-data and fetch-lodging.
 
-    const token = authHeader.replace("Bearer ", "");
-    const authClient = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
-
-    const { data: claimsData, error: claimsError } = await authClient.auth.getClaims(token);
-    if (claimsError || !claimsData?.claims) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
 
     const FlightRequestSchema = z.object({
       origins: z.array(z.object({
