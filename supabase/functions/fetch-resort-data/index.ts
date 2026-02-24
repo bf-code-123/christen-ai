@@ -154,19 +154,21 @@ async function fetchCurrentSnowData(resort: typeof RESORTS[0]): Promise<CurrentS
     // Daily snowfall array (8 entries: 7 past days + today)
     const dailySnowfall: number[] = forecastData.daily?.snowfall_sum || [];
 
-    // last24hrSnowfall: most recent day's value
-    const last24hrSnowfall = dailySnowfall.length > 0 ? (dailySnowfall[dailySnowfall.length - 1] || 0) : 0;
+    // last24hrSnowfall: yesterday's complete 24hr value (second-to-last entry)
+    const last24hrSnowfall = dailySnowfall.length >= 2 ? (dailySnowfall[dailySnowfall.length - 2] || 0) : 0;
 
-    // last7daysSnowfall: sum of last 7 daily entries
-    const last7days = dailySnowfall.slice(-7);
+    // last7daysSnowfall: sum of 7 completed past days, excluding today's partial
+    const last7days = dailySnowfall.slice(0, -1);
     const last7daysSnowfall = last7days.reduce((a, b) => a + (b || 0), 0);
 
-    // seasonTotalSnowfall: historical API from Nov 1 to today
+    // seasonTotalSnowfall: archive from Nov 1 to 8 days ago + last 7 days from forecast
     const seasonStart = getSeasonStartDate();
-    const today = formatDate(new Date());
+    const eightDaysAgo = new Date();
+    eightDaysAgo.setDate(eightDaysAgo.getDate() - 8);
+    const archiveEnd = formatDate(eightDaysAgo);
     let seasonTotalSnowfall = 0;
     try {
-      const archiveUrl = `https://archive-api.open-meteo.com/v1/archive?latitude=${resort.lat}&longitude=${resort.lng}&start_date=${seasonStart}&end_date=${today}&daily=snowfall_sum&timezone=auto`;
+      const archiveUrl = `https://archive-api.open-meteo.com/v1/archive?latitude=${resort.lat}&longitude=${resort.lng}&start_date=${seasonStart}&end_date=${archiveEnd}&daily=snowfall_sum&timezone=auto`;
       const archiveRes = await fetch(archiveUrl);
       if (archiveRes.ok) {
         const archiveData = await archiveRes.json();
@@ -174,8 +176,11 @@ async function fetchCurrentSnowData(resort: typeof RESORTS[0]): Promise<CurrentS
         seasonTotalSnowfall = seasonDaily.reduce((a, b) => a + (b || 0), 0);
       }
     } catch {
-      // Season total unavailable, leave as 0
+      // Archive unavailable, just use forecast days
     }
+    // Add the 7 complete past days from forecast to bridge the gap
+    const completePastDays = dailySnowfall.slice(0, -1); // exclude today
+    seasonTotalSnowfall += completePastDays.reduce((a, b) => a + (b || 0), 0);
 
     return {
       isHistorical: false,
