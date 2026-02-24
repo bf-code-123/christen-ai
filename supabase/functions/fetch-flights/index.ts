@@ -18,14 +18,43 @@ const RESORT_AIRPORTS: Record<string, string> = {
   "Banff Sunshine": "YYC", "Lake Louise": "YYC",
   "Mont-Tremblant": "YUL", "Revelstoke": "YLW",
   "Aspen Snowmass": "ASE", "Deer Valley": "SLC",
+  "Breckenridge": "DEN", "Copper Mountain": "DEN",
+  "Squaw Valley / Palisades": "RNO", "Sun Valley": "SUN",
+  "Winter Park": "DEN",
   // Europe
   "Chamonix": "GVA", "Verbier": "GVA", "Zermatt": "GVA",
   "Val d'Isere": "GVA", "Courchevel": "GVA", "St. Anton": "INN",
   "Kitzbühel": "INN", "Innsbruck/Axamer Lizum": "INN",
+  "Axamer Lizum": "INN",
   "Les Arcs": "GVA", "Tignes": "GVA",
   // Japan
   "Niseko": "CTS", "Hakuba": "NRT", "Furano": "CTS", "Nozawa Onsen": "NRT",
 };
+
+interface FlightSegment {
+  carrierCode: string;
+  flightNumber: string;
+  departureAirport: string;
+  arrivalAirport: string;
+  departureTime: string;
+  arrivalTime: string;
+}
+
+interface FlightLeg {
+  departure: string;
+  arrival: string;
+  duration: string;
+  stops: number;
+  segments: FlightSegment[];
+}
+
+interface FlightOption {
+  price: number;
+  currency: string;
+  airlines: string[];
+  outbound: FlightLeg;
+  return: FlightLeg;
+}
 
 interface FlightRequest {
   origins: { airport: string; guestName?: string }[];
@@ -39,7 +68,7 @@ async function getAmadeusToken(): Promise<string> {
   const clientSecret = Deno.env.get("AMADEUS_CLIENT_SECRET")!;
 
   const res = await fetch(
-    "https://test.api.amadeus.com/v1/security/oauth2/token",
+    "https://api.amadeus.com/v1/security/oauth2/token",
     {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -56,15 +85,35 @@ async function getAmadeusToken(): Promise<string> {
   return data.access_token;
 }
 
+function parseItinerary(itinerary: any): FlightLeg {
+  const segments = itinerary.segments || [];
+  const parsedSegments: FlightSegment[] = segments.map((seg: any) => ({
+    carrierCode: seg.carrierCode || "",
+    flightNumber: `${seg.carrierCode || ""}${seg.number || ""}`,
+    departureAirport: seg.departure?.iataCode || "",
+    arrivalAirport: seg.arrival?.iataCode || "",
+    departureTime: seg.departure?.at || "",
+    arrivalTime: seg.arrival?.at || "",
+  }));
+
+  return {
+    departure: segments[0]?.departure?.at || "",
+    arrival: segments[segments.length - 1]?.arrival?.at || "",
+    duration: itinerary.duration || "",
+    stops: Math.max(0, segments.length - 1),
+    segments: parsedSegments,
+  };
+}
+
 async function searchFlights(
   token: string,
   origin: string,
   destination: string,
   departureDate: string,
   returnDate: string
-): Promise<number | null> {
+): Promise<FlightOption[] | null> {
   const url = new URL(
-    "https://test.api.amadeus.com/v2/shopping/flight-offers"
+    "https://api.amadeus.com/v2/shopping/flight-offers"
   );
   url.searchParams.set("originLocationCode", origin);
   url.searchParams.set("destinationLocationCode", destination);
@@ -73,7 +122,7 @@ async function searchFlights(
   url.searchParams.set("adults", "1");
   url.searchParams.set("nonStop", "false");
   url.searchParams.set("currencyCode", "USD");
-  url.searchParams.set("max", "1");
+  url.searchParams.set("max", "3");
 
   const res = await fetch(url.toString(), {
     headers: { Authorization: `Bearer ${token}` },
@@ -85,10 +134,43 @@ async function searchFlights(
   }
 
   const data = await res.json();
-  if (data.data && data.data.length > 0) {
-    return parseFloat(data.data[0].price.total);
+  if (!data.data || data.data.length === 0) {
+    return null;
   }
-  return null;
+
+  // Parse up to 3 offers, sorted by price (Amadeus returns sorted by default)
+  const options: FlightOption[] = data.data.slice(0, 3).map((offer: any) => {
+    const itineraries = offer.itineraries || [];
+
+    // Collect all unique carrier codes
+    const allCarriers = new Set<string>();
+    for (const itin of itineraries) {
+      for (const seg of (itin.segments || [])) {
+        if (seg.carrierCode) allCarriers.add(seg.carrierCode);
+      }
+    }
+
+    const outbound = itineraries[0] ? parseItinerary(itineraries[0]) : {
+      departure: "", arrival: "", duration: "", stops: 0, segments: [],
+    };
+
+    const returnLeg = itineraries[1] ? parseItinerary(itineraries[1]) : {
+      departure: "", arrival: "", duration: "", stops: 0, segments: [],
+    };
+
+    return {
+      price: parseFloat(offer.price?.total || "0"),
+      currency: offer.price?.currency || "USD",
+      airlines: [...allCarriers],
+      outbound,
+      return: returnLeg,
+    };
+  });
+
+  // Sort by price ascending
+  options.sort((a, b) => a.price - b.price);
+
+  return options;
 }
 
 Deno.serve(async (req) => {
@@ -140,83 +222,52 @@ Deno.serve(async (req) => {
     }
     const { origins, departureDate, returnDate, resorts } = parseResult.data;
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
-
     // Build all origin->destination pairs
     const destinationAirports = [
       ...new Set(resorts.map((r) => RESORT_AIRPORTS[r]).filter(Boolean)),
     ];
-    
-    const results: Record<string, Record<string, { price: number | null; currency: string }>> = {};
-    const pairsToFetch: { origin: string; dest: string }[] = [];
 
-    // Check cache first
-    const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+    // TODO: Re-enable flight caching once flight_cache table is updated to store JSONB details
+    // For now, always fetch fresh data from Amadeus to get rich flight details
+    const results: Record<string, Record<string, FlightOption[] | null>> = {};
 
-    for (const { airport: origin } of origins) {
-      results[origin] = {};
-      for (const dest of destinationAirports) {
-        // Check cache
-        const { data: cached } = await supabase
-          .from("flight_cache")
-          .select("price, currency")
-          .eq("origin_airport", origin)
-          .eq("destination_airport", dest)
-          .eq("departure_date", departureDate)
-          .eq("return_date", returnDate)
-          .gt("cached_at", sixHoursAgo)
-          .limit(1)
-          .maybeSingle();
-
-        if (cached) {
-          results[origin][dest] = { price: cached.price, currency: cached.currency || "USD" };
-        } else {
-          pairsToFetch.push({ origin, dest });
+    let amadeusToken: string;
+    try {
+      amadeusToken = await getAmadeusToken();
+    } catch (e) {
+      console.error("Amadeus auth error:", e);
+      // Return empty results
+      for (const { airport: origin } of origins) {
+        results[origin] = {};
+        for (const dest of destinationAirports) {
+          results[origin][dest] = null;
         }
       }
+      return new Response(
+        JSON.stringify({ flights: results, resortAirports: RESORT_AIRPORTS }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
-    // Fetch missing pairs from Amadeus
-    if (pairsToFetch.length > 0) {
-      let token: string;
-      try {
-        token = await getAmadeusToken();
-      } catch (e) {
-        console.error("Amadeus auth error:", e);
-        // Return what we have from cache + nulls for the rest
-        for (const { origin, dest } of pairsToFetch) {
-          results[origin][dest] = { price: null, currency: "USD" };
+    // Fetch all pairs sequentially with small delay for rate limiting
+    for (const { airport: origin } of origins) {
+      if (!results[origin]) results[origin] = {};
+      for (const dest of destinationAirports) {
+        if (origin === dest) {
+          // Skip same-airport routes
+          results[origin][dest] = null;
+          continue;
         }
-        return new Response(
-          JSON.stringify({ flights: results, resortAirports: RESORT_AIRPORTS }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      // Rate-limit: fetch sequentially with small delay
-      for (const { origin, dest } of pairsToFetch) {
-        const price = await searchFlights(token, origin, dest, departureDate, returnDate);
-        results[origin][dest] = { price, currency: "USD" };
-
-        // Cache the result
-        await supabase.from("flight_cache").upsert(
-          {
-            origin_airport: origin,
-            destination_airport: dest,
-            departure_date: departureDate,
-            return_date: returnDate,
-            price,
-            currency: "USD",
-            cached_at: new Date().toISOString(),
-          },
-          { onConflict: "origin_airport,destination_airport,departure_date,return_date" }
-        );
+        try {
+          const options = await searchFlights(amadeusToken, origin, dest, departureDate, returnDate);
+          results[origin][dest] = options;
+        } catch (err) {
+          console.error(`Flight search error ${origin}->${dest}:`, err);
+          results[origin][dest] = null;
+        }
 
         // Small delay to respect rate limits
-        await new Promise((r) => setTimeout(r, 200));
+        await new Promise((r) => setTimeout(r, 250));
       }
     }
 
