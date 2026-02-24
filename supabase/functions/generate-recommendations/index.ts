@@ -81,7 +81,7 @@ serve(async (req) => {
     const resortRes = await fetch(`${SUPABASE_URL}/functions/v1/fetch-resort-data`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
-      body: JSON.stringify({ regions: trip.geography }),
+      body: JSON.stringify({ regions: trip.geography, dateStart: trip.date_start, dateEnd: trip.date_end }),
     });
     const resortData = await resortRes.json();
     if (!resortData.resorts) throw new Error('Failed to fetch resort data');
@@ -185,7 +185,7 @@ Return ONLY valid JSON in this exact format:
         { "day": 1, "morning": "string", "afternoon": "string", "evening": "string" }
       ],
       "warnings": ["string"],
-      "snowConditions": { "snowDepth": number, "recentSnowfall": number },
+      "snowConditions": { "currentSnowDepth": number, "last24hrSnowfall": number, "last7daysSnowfall": number, "seasonTotalSnowfall": number, "isHistorical": boolean, "historicalSnowDepth": number, "historicalSnowfall": number },
       "lodgingRecommendation": {
         "name": "string",
         "type": "string",
@@ -216,7 +216,7 @@ Return ONLY valid JSON in this exact format:
 ${(guests || []).map((g: any) => `- ${g.name}: from ${g.origin_city || 'unknown'} (${g.airport_code || 'no airport'}), skill: ${g.skill_level}, budget: $${g.budget_min || '?'}-$${g.budget_max || '?'}`).join('\n')}
 
 ## Available Resorts with Snow Data
-${resortData.resorts.map((r: any) => `- ${r.name} (${r.country}, ${r.region}): Pass: ${r.pass.join('/')}, Terrain: ${r.terrain.beginner}%beg/${r.terrain.intermediate}%int/${r.terrain.advanced}%adv/${r.terrain.expert}%exp, Lift ticket: $${r.liftTicket}, Snow depth: ${r.snow?.snowDepth || 0}cm, Recent snow: ${r.snow?.recentSnowfall || 0}cm, Après: ${r.apresScore}/10, Non-skier: ${r.nonSkierScore}/10, Ski-in/out: ${r.skiInOut}, Vibes: ${r.vibeTags.join(', ')}`).join('\n')}
+${resortData.resorts.map((r: any) => `- ${r.name} (${r.country}, ${r.region}): Pass: ${r.pass.join('/')}, Terrain: ${r.terrain.beginner}%beg/${r.terrain.intermediate}%int/${r.terrain.advanced}%adv/${r.terrain.expert}%exp, Lift ticket: $${r.liftTicket}, Snow: depth ${r.snow?.currentSnowDepth || r.snow?.historicalSnowDepth || 0}cm, 24hr ${r.snow?.last24hrSnowfall ?? 'N/A'}cm, 7day ${r.snow?.last7daysSnowfall ?? 'N/A'}cm, season total ${r.snow?.seasonTotalSnowfall ?? 'N/A'}cm${r.snow?.isHistorical ? ' (historical proxy from last season)' : ''}, Après: ${r.apresScore}/10, Non-skier: ${r.nonSkierScore}/10, Ski-in/out: ${r.skiInOut}, Vibes: ${r.vibeTags.join(', ')}`).join('\n')}
 
 ## Lodging Options
 ${Object.entries(lodgingData.lodging || {}).map(([name, data]: [string, any]) => {
