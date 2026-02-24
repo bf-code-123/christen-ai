@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { z } from "https://esm.sh/zod@3.23.8";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -120,15 +121,24 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { origins, departureDate, returnDate, resorts } =
-      (await req.json()) as FlightRequest;
+    const FlightRequestSchema = z.object({
+      origins: z.array(z.object({
+        airport: z.string().regex(/^[A-Z]{3,4}$/, 'Invalid airport code'),
+        guestName: z.string().max(100).optional(),
+      })).min(1, 'At least one origin required').max(20, 'Too many origins'),
+      departureDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format'),
+      returnDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format'),
+      resorts: z.array(z.string().max(100)).min(1, 'At least one resort required').max(50, 'Too many resorts'),
+    });
 
-    if (!origins?.length || !departureDate || !returnDate || !resorts?.length) {
+    const parseResult = FlightRequestSchema.safeParse(await req.json());
+    if (!parseResult.success) {
       return new Response(
-        JSON.stringify({ error: "Missing required fields" }),
+        JSON.stringify({ error: "Invalid request data" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+    const { origins, departureDate, returnDate, resorts } = parseResult.data;
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,

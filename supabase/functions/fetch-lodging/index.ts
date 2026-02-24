@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { z } from "https://esm.sh/zod@3.23.8";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -99,11 +100,23 @@ serve(async (req) => {
   }
 
   try {
-    const { resorts, groupSize = 4, lodgingPreference = "Hotel", nights = 5 } = await req.json();
+    const LodgingRequestSchema = z.object({
+      resorts: z.array(z.object({
+        name: z.string().max(100),
+        lodgingRange: z.array(z.number()).length(2).optional(),
+      })).min(1, 'At least one resort required').max(50, 'Too many resorts'),
+      groupSize: z.number().int().min(1).max(100).default(4),
+      lodgingPreference: z.string().max(50).default("Hotel"),
+      nights: z.number().int().min(1).max(30).default(5),
+    });
 
-    if (!resorts || !Array.isArray(resorts)) {
-      throw new Error("resorts array is required");
+    const parseResult = LodgingRequestSchema.safeParse(await req.json());
+    if (!parseResult.success) {
+      return new Response(JSON.stringify({ error: 'Invalid request data' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
+    const { resorts, groupSize, lodgingPreference, nights } = parseResult.data;
 
     const result: Record<string, {
       options: typeof LODGING_DATA[string];

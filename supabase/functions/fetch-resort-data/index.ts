@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { z } from "https://esm.sh/zod@3.23.8";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -101,11 +102,21 @@ serve(async (req) => {
   }
 
   try {
-    const { regions } = await req.json().catch(() => ({ regions: null }));
+    const ResortRequestSchema = z.object({
+      regions: z.array(z.string().max(50)).max(10, 'Too many regions').nullable().optional(),
+    });
+
+    const parseResult = ResortRequestSchema.safeParse(await req.json().catch(() => ({})));
+    if (!parseResult.success) {
+      return new Response(JSON.stringify({ error: 'Invalid request data' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const regions = parseResult.data.regions;
     
     // Filter resorts by region if specified
     let filteredResorts = RESORTS;
-    if (regions && Array.isArray(regions) && regions.length > 0 && !regions.includes("No Preference")) {
+    if (regions && regions.length > 0 && !regions.includes("No Preference")) {
       filteredResorts = RESORTS.filter(r => regions.includes(r.region));
     }
     
