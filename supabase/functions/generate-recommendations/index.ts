@@ -115,8 +115,8 @@ serve(async (req) => {
     let flightData: any = null;
     try {
       const origins = (guests || [])
-        .filter((g: any) => g.airport_code || g.origin_city)
-        .map((g: any) => ({ airport: g.airport_code || g.origin_city, guestName: g.name }));
+        .filter((g: any) => g.airport_code && /^[A-Z]{3,4}$/.test(g.airport_code))
+        .map((g: any) => ({ airport: g.airport_code, guestName: g.name }));
 
       if (origins.length > 0 && trip.date_start && trip.date_end) {
         const flightRes = await fetch(`${SUPABASE_URL}/functions/v1/fetch-flights`, {
@@ -163,7 +163,7 @@ For each resort, provide:
 6. A 5-day sample itinerary
 7. Any warnings (e.g. "Long travel day from Boston", "Limited beginner terrain")
 8. Snow conditions from the provided data
-9. Per-guest estimated flight costs as "flightDetailsPerGuest": array of { guestName, origin, estimatedCost }
+9. Per-guest estimated flight costs as "flightDetailsPerGuest": array of { guestName, origin, destinationAirport, estimatedCost, airline, stops, duration }. Use the actual flight data provided when available.
 
 Return ONLY valid JSON in this exact format:
 {
@@ -194,7 +194,7 @@ Return ONLY valid JSON in this exact format:
         "costPerPerson": number
       },
       "flightDetailsPerGuest": [
-        { "guestName": "string", "origin": "string", "estimatedCost": number }
+        { "guestName": "string", "origin": "string", "destinationAirport": "string", "estimatedCost": number, "airline": "string", "stops": number, "duration": "string" }
       ]
     }
   ]
@@ -224,7 +224,14 @@ ${Object.entries(lodgingData.lodging || {}).map(([name, data]: [string, any]) =>
   return best ? `- ${name}: Best option: ${best.option.name} (${best.option.type}, $${best.option.pricePerNight}/night, ${best.units} units, $${best.costPerPerson}/person total)` : `- ${name}: No lodging data`;
 }).join('\n')}
 
-${flightData ? `## Flight Prices\n${JSON.stringify(flightData, null, 2)}` : '## Flights: No flight price data available. Please estimate based on origin cities and resort locations.'}
+${flightData ? `## Flight Options\n${Object.entries(flightData.flights || {}).map(([origin, dests]: [string, any]) => 
+  Object.entries(dests).map(([dest, options]: [string, any]) => {
+    if (!options || !options.length) return `${origin} → ${dest}: No flights found`;
+    return `${origin} → ${dest}:\n${options.map((o: any, i: number) => 
+      `  Option ${i+1}: $${o.price} ${o.currency || 'USD'} — ${(o.airlines || []).join('/')} — Outbound: ${o.outbound?.stops ?? '?'} stop(s), ${o.outbound?.duration || 'N/A'} — Return: ${o.return?.stops ?? '?'} stop(s), ${o.return?.duration || 'N/A'}`
+    ).join('\n')}`;
+  }).join('\n')
+).join('\n')}` : '## Flights: No flight price data available. Please estimate based on origin cities and resort locations.'}
 
 Please recommend the top 3 resorts that best match this group's needs.`;
 
