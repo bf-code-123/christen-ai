@@ -15,6 +15,8 @@ serve(async (req) => {
   }
 
   try {
+    console.log('Step 0: Starting generate-recommendations...');
+
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) throw new Error('LOVABLE_API_KEY is not configured');
 
@@ -35,13 +37,16 @@ serve(async (req) => {
       global: { headers: { Authorization: authHeader } },
     });
     const token = authHeader.replace('Bearer ', '');
+    console.log('Step 0.5: Validating JWT claims...');
     const { data: claimsData, error: claimsError } = await authClient.auth.getClaims(token);
     if (claimsError || !claimsData?.claims) {
+      console.error('Step 0.5 failed: JWT claims error:', claimsError);
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
     const userId = claimsData.claims.sub;
+    console.log('Step 0.5: JWT validated, userId:', userId);
 
     // Use service role for data access (RLS is now owner-only)
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -56,14 +61,20 @@ serve(async (req) => {
       });
     }
     const { tripId } = parseResult.data;
+    console.log('Step 0.9: tripId parsed:', tripId);
 
     // 1. Fetch trip data and verify ownership
+    console.log('Step 1: Fetching trip data...');
     const { data: trip, error: tripError } = await supabase
       .from('trips')
       .select('*')
       .eq('id', tripId)
       .single();
-    if (tripError || !trip) throw new Error(`Trip not found: ${tripError?.message}`);
+    if (tripError || !trip) {
+      console.error('Step 1 failed: Trip not found:', tripError);
+      throw new Error(`Trip not found: ${tripError?.message}`);
+    }
+    console.log('Step 1: Trip fetched:', trip.trip_name);
 
     if (trip.user_id !== userId) {
       return new Response(JSON.stringify({ error: 'Forbidden: you do not own this trip' }), {
@@ -72,19 +83,32 @@ serve(async (req) => {
     }
 
     // 2. Fetch guests
-    const { data: guests } = await supabase
+    console.log('Step 2: Fetching guests...');
+    const { data: guests, error: guestsError } = await supabase
       .from('guests')
       .select('*')
       .eq('trip_id', tripId);
+    if (guestsError) console.error('Step 2 warning: guests fetch error:', guestsError);
+    console.log('Step 2: Guests fetched:', (guests || []).length, 'guests');
 
     // 3. Fetch resort data
+    console.log('Step 3: Calling fetch-resort-data...');
     const resortRes = await fetch(`${SUPABASE_URL}/functions/v1/fetch-resort-data`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
       body: JSON.stringify({ regions: trip.geography, dateStart: trip.date_start, dateEnd: trip.date_end }),
     });
+    if (!resortRes.ok) {
+      const resortErrBody = await resortRes.text();
+      console.error('Step 3 failed: fetch-resort-data returned', resortRes.status, resortErrBody);
+      throw new Error(`Failed to fetch resort data: ${resortRes.status}`);
+    }
     const resortData = await resortRes.json();
-    if (!resortData.resorts) throw new Error('Failed to fetch resort data');
+    if (!resortData.resorts) {
+      console.error('Step 3 failed: No resorts in response:', JSON.stringify(resortData).substring(0, 500));
+      throw new Error('Failed to fetch resort data');
+    }
+    console.log('Step 3: Resort data fetched:', resortData.resorts.length, 'resorts');
 
     // Build resort lookup for enrichment
     const resortLookup: Record<string, any> = {};
@@ -97,8 +121,10 @@ serve(async (req) => {
       const end = new Date(trip.date_end);
       nights = Math.max(1, Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
     }
+    console.log('Step 4: Trip duration:', nights, 'nights');
 
     // 5. Fetch lodging data
+    console.log('Step 5: Calling fetch-lodging...');
     const lodgingRes = await fetch(`${SUPABASE_URL}/functions/v1/fetch-lodging`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
@@ -109,16 +135,25 @@ serve(async (req) => {
         nights,
       }),
     });
+    if (!lodgingRes.ok) {
+      const lodgingErrBody = await lodgingRes.text();
+      console.error('Step 5 failed: fetch-lodging returned', lodgingRes.status, lodgingErrBody);
+    }
     const lodgingData = await lodgingRes.json();
+    console.log('Step 5: Lodging data fetched, keys:', Object.keys(lodgingData.lodging || {}).length);
 
     // 6. Attempt to fetch flight data
+    console.log('Step 6: Preparing flight data fetch...');
     let flightData: any = null;
     try {
       const origins = (guests || [])
         .filter((g: any) => g.airport_code && /^[A-Z]{3,4}$/.test(g.airport_code))
         .map((g: any) => ({ airport: g.airport_code, guestName: g.name }));
 
+      console.log('Step 6: Valid origins:', JSON.stringify(origins));
+
       if (origins.length > 0 && trip.date_start && trip.date_end) {
+        console.log('Step 6: Calling fetch-flights...');
         const flightRes = await fetch(`${SUPABASE_URL}/functions/v1/fetch-flights`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
@@ -129,12 +164,19 @@ serve(async (req) => {
             resorts: resortData.resorts.map((r: any) => r.name),
           }),
         });
+        console.log('Step 6: fetch-flights response status:', flightRes.status);
         if (flightRes.ok) {
           flightData = await flightRes.json();
+          console.log('Step 6: Flight data received, origins in data:', Object.keys(flightData.flights || {}).length);
+        } else {
+          const flightErrBody = await flightRes.text();
+          console.error('Step 6 failed: fetch-flights returned', flightRes.status, flightErrBody);
         }
+      } else {
+        console.log('Step 6: Skipping flights - no valid origins or missing dates');
       }
-    } catch {
-      console.log('Flight data not available, proceeding without it');
+    } catch (flightErr) {
+      console.error('Step 6 failed with exception:', flightErr);
     }
 
     // 7. Parse vibe string
@@ -147,6 +189,7 @@ serve(async (req) => {
     }
 
     // 8. Build AI prompt with enriched output schema
+    console.log('Step 8: Building AI prompt...');
     const systemPrompt = `You are an expert ski trip planner. Given a group's preferences, budget, skill levels, origin cities, pass types, vibe preferences, and real-time resort data including snow conditions, flight prices, and lodging options, recommend the top 3 ski resorts.
 
 For each resort, provide:
@@ -236,6 +279,8 @@ ${flightData ? `## Flight Options\n${Object.entries(flightData.flights || {}).ma
 Please recommend the top 3 resorts that best match this group's needs.`;
 
     // 9. Call AI
+    console.log('Step 9: Calling AI gateway...');
+    console.log('Step 9: Prompt length - system:', systemPrompt.length, 'user:', userMessage.length);
     const aiResponse = await fetch(AI_GATEWAY_URL, {
       method: 'POST',
       headers: {
@@ -255,52 +300,57 @@ Please recommend the top 3 resorts that best match this group's needs.`;
 
     if (!aiResponse.ok) {
       const errBody = await aiResponse.text();
+      console.error('Step 9 failed: AI API returned', aiResponse.status, errBody.substring(0, 500));
       throw new Error(`AI API call failed [${aiResponse.status}]: ${errBody}`);
     }
+    console.log('Step 9: AI response received, status:', aiResponse.status);
 
     const aiData = await aiResponse.json();
     const content = aiData.choices?.[0]?.message?.content;
-    if (!content) throw new Error('No content in AI response');
+    if (!content) {
+      console.error('Step 9 failed: No content in AI response. Full response:', JSON.stringify(aiData).substring(0, 500));
+      throw new Error('No content in AI response');
+    }
+    console.log('Step 9: AI content length:', content.length);
 
+    // 10. Parse AI response
+    console.log('Step 10: Parsing AI response...');
     let recommendations;
     try {
       recommendations = JSON.parse(content);
-    } catch {
+    } catch (parseErr) {
+      console.error('Step 10: Direct JSON parse failed, trying markdown extraction...');
       const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (jsonMatch) {
         recommendations = JSON.parse(jsonMatch[1]);
       } else {
+        console.error('Step 10 failed: Could not parse AI response. First 500 chars:', content.substring(0, 500));
         throw new Error('Failed to parse AI response as JSON');
       }
     }
+    console.log('Step 10: Parsed successfully, recommendations count:', recommendations.recommendations?.length);
 
-    // 10. Enrich recommendations with resort metadata
+    // 11. Enrich recommendations with resort metadata
+    console.log('Step 11: Enriching recommendations...');
     const passTypes = trip.pass_types || [];
     if (recommendations.recommendations) {
       recommendations.recommendations = recommendations.recommendations.map((rec: any) => {
         const resortMeta = resortLookup[rec.resortName];
         if (resortMeta) {
-          // Add pass coverage
           const allPasses = ['Ikon', 'Epic'];
           rec.passCoverage = allPasses.map(p => ({
             pass: `${p} Pass`,
             covered: resortMeta.pass.includes(p.toLowerCase()),
           }));
-
-          // Add terrain breakdown
           rec.terrainBreakdown = resortMeta.terrain;
-
-          // Add country/region
           rec.country = resortMeta.country;
           rec.region = resortMeta.region;
-
-          // Add skiInOut
           rec.skiInOut = resortMeta.skiInOut;
         }
         return rec;
       });
 
-      // 11. Build flight summary for per-guest table
+      // Build flight summary for per-guest table
       const flightSummary: Record<string, Record<string, number | null>> = {};
       recommendations.recommendations.forEach((rec: any) => {
         if (rec.flightDetailsPerGuest) {
@@ -313,8 +363,10 @@ Please recommend the top 3 resorts that best match this group's needs.`;
       });
       recommendations.flightSummary = flightSummary;
     }
+    console.log('Step 11: Enrichment complete');
 
     // 12. Store in database
+    console.log('Step 12: Storing recommendations in database...');
     const { error: insertError } = await supabase
       .from('recommendations')
       .insert({
@@ -322,16 +374,18 @@ Please recommend the top 3 resorts that best match this group's needs.`;
         results: recommendations,
       });
     if (insertError) {
-      console.error('Failed to store recommendations:', insertError);
+      console.error('Step 12 failed: Failed to store recommendations:', insertError);
+    } else {
+      console.log('Step 12: Recommendations stored successfully');
     }
 
+    console.log('Step 13: Returning response');
     return new Response(JSON.stringify(recommendations), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error) {
-    console.error('generate-recommendations error:', error);
+    console.error('generate-recommendations FULL error:', error, error instanceof Error ? error.stack : '(no stack)');
     const msg = error instanceof Error ? error.message : '';
-    // Only expose safe, known error messages
     const safeMessages: Record<string, string> = {
       'tripId is required': 'Trip ID is required',
       'Forbidden: you do not own this trip': 'Access denied',
