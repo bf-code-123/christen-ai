@@ -68,7 +68,7 @@ async function getAmadeusToken(): Promise<string> {
   const clientSecret = Deno.env.get("AMADEUS_CLIENT_SECRET")!;
 
   const res = await fetch(
-    "https://api.amadeus.com/v1/security/oauth2/token",
+    "https://test.api.amadeus.com/v1/security/oauth2/token",
     {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -113,7 +113,7 @@ async function searchFlights(
   returnDate: string
 ): Promise<FlightOption[] | null> {
   const url = new URL(
-    "https://api.amadeus.com/v2/shopping/flight-offers"
+    "https://test.api.amadeus.com/v2/shopping/flight-offers"
   );
   url.searchParams.set("originLocationCode", origin);
   url.searchParams.set("destinationLocationCode", destination);
