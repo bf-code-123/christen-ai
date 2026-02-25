@@ -152,7 +152,7 @@ serve(async (req) => {
       (origins.length > 0 && trip.date_start && trip.date_end)
         ? fetch(`${SUPABASE_URL}/functions/v1/fetch-flights`, {
             method: 'POST',
-            signal: AbortSignal.timeout(30000),
+            signal: AbortSignal.timeout(20000),
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
             body: JSON.stringify({
               origins,

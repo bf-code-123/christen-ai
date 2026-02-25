@@ -137,7 +137,7 @@ async function fetchCurrentSnowData(resort: typeof RESORTS[0]): Promise<CurrentS
   try {
     // Single forecast call: past_days=7 gives us 7 days history + 1 day forecast
     const forecastUrl = `https://api.open-meteo.com/v1/forecast?latitude=${resort.lat}&longitude=${resort.lng}&daily=snowfall_sum&hourly=snow_depth&past_days=7&forecast_days=1&timezone=auto`;
-    const forecastRes = await fetch(forecastUrl);
+    const forecastRes = await fetch(forecastUrl, { signal: AbortSignal.timeout(8000) });
     if (!forecastRes.ok) throw new Error(`Forecast API error: ${forecastRes.status}`);
     const forecastData = await forecastRes.json();
 
@@ -169,7 +169,7 @@ async function fetchCurrentSnowData(resort: typeof RESORTS[0]): Promise<CurrentS
     let seasonTotalSnowfall = 0;
     try {
       const archiveUrl = `https://archive-api.open-meteo.com/v1/archive?latitude=${resort.lat}&longitude=${resort.lng}&start_date=${seasonStart}&end_date=${archiveEnd}&daily=snowfall_sum&timezone=auto`;
-      const archiveRes = await fetch(archiveUrl);
+      const archiveRes = await fetch(archiveUrl, { signal: AbortSignal.timeout(8000) });
       if (archiveRes.ok) {
         const archiveData = await archiveRes.json();
         const seasonDaily: number[] = archiveData.daily?.snowfall_sum || [];
@@ -231,24 +231,28 @@ async function fetchSnowData(
 ): Promise<Record<string, SnowData>> {
   const snowData: Record<string, SnowData> = {};
 
-  // Process resorts sequentially with small delays to avoid Open-Meteo 429 rate limits
-  for (let i = 0; i < resorts.length; i++) {
-    const resort = resorts[i];
-    try {
-      if (mode === "historical" && dateStart && dateEnd) {
-        snowData[resort.name] = await fetchHistoricalSnowData(resort, dateStart, dateEnd);
-      } else {
-        snowData[resort.name] = await fetchCurrentSnowData(resort);
+  // Process resorts in parallel batches of 5 to respect Open-Meteo rate limits
+  // while being ~5x faster than fully sequential (26 resorts: ~10s vs ~50s)
+  const BATCH_SIZE = 5;
+  for (let i = 0; i < resorts.length; i += BATCH_SIZE) {
+    const batch = resorts.slice(i, i + BATCH_SIZE);
+    await Promise.all(batch.map(async (resort) => {
+      try {
+        if (mode === "historical" && dateStart && dateEnd) {
+          snowData[resort.name] = await fetchHistoricalSnowData(resort, dateStart, dateEnd);
+        } else {
+          snowData[resort.name] = await fetchCurrentSnowData(resort);
+        }
+      } catch (err) {
+        console.error(`Snow fetch failed for ${resort.name}:`, err);
+        snowData[resort.name] = mode === "historical"
+          ? { isHistorical: true, historicalSnowDepth: 0, historicalSnowfall: 0 }
+          : { isHistorical: false, currentSnowDepth: 0, last24hrSnowfall: 0, last7daysSnowfall: 0, seasonTotalSnowfall: 0 };
       }
-    } catch (err) {
-      console.error(`Snow fetch failed for ${resort.name}:`, err);
-      snowData[resort.name] = mode === "historical"
-        ? { isHistorical: true, historicalSnowDepth: 0, historicalSnowfall: 0 }
-        : { isHistorical: false, currentSnowDepth: 0, last24hrSnowfall: 0, last7daysSnowfall: 0, seasonTotalSnowfall: 0 };
-    }
-    // Wait 300ms between each resort to respect Open-Meteo free tier rate limits
-    if (i < resorts.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 300));
+    }));
+    // 200ms pause between batches to avoid hammering Open-Meteo
+    if (i + BATCH_SIZE < resorts.length) {
+      await new Promise(resolve => setTimeout(resolve, 200));
     }
   }
 
