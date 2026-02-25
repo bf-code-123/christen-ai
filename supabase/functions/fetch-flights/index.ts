@@ -1,12 +1,21 @@
 console.log("fetch-flights: module loading");
 
 import { z } from "https://esm.sh/zod@3.23.8";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
+
+// Airline alliance membership
+const ALLIANCE_CARRIERS: Record<string, string[]> = {
+  oneworld:      ["AA", "BA", "IB", "CX", "QF", "JL", "AY", "MH", "QR", "RJ", "S7", "UL", "AT", "AS"],
+  star_alliance: ["UA", "LH", "SQ", "AC", "TK", "LX", "OS", "SK", "SN", "OZ", "NH", "CA", "ET", "EW", "G3", "MS", "NZ", "OU", "SA", "YM"],
+  skyteam:       ["DL", "AF", "KL", "KE", "MU", "CZ", "AM", "AR", "AZ", "CI", "CX", "GA", "MF", "ME", "OK", "RO", "SV", "VN", "VY", "WS", "XL"],
+};
+const ALL_ALLIANCE_CARRIERS = new Set(Object.values(ALLIANCE_CARRIERS).flat());
 
 // Map resorts to nearest major airports
 const RESORT_AIRPORTS: Record<string, string> = {
@@ -53,8 +62,14 @@ interface FlightOption {
   price: number;
   currency: string;
   airlines: string[];
+  originAirport: string;
   outbound: FlightLeg;
   return: FlightLeg;
+}
+
+interface FlightPicks {
+  cheapest: FlightOption | null;
+  mostDirect: FlightOption | null;
 }
 
 async function getAmadeusToken(): Promise<string> {
@@ -103,16 +118,66 @@ function parseItinerary(itinerary: any): FlightLeg {
   };
 }
 
-async function searchFlights(
+function pickBestFlights(options: FlightOption[]): FlightPicks {
+  if (options.length === 0) return { cheapest: null, mostDirect: null };
+
+  // Cheapest by price
+  const cheapest = options.reduce((a, b) => a.price < b.price ? a : b);
+
+  // Most direct: fewest total stops, then lowest price
+  const sorted = [...options].sort((a, b) => {
+    const stopsA = a.outbound.stops + a.return.stops;
+    const stopsB = b.outbound.stops + b.return.stops;
+    if (stopsA !== stopsB) return stopsA - stopsB;
+    return a.price - b.price;
+  });
+
+  let mostDirect = sorted[0];
+  // If mostDirect is the same object as cheapest, pick next-best
+  if (mostDirect === cheapest && sorted.length > 1) {
+    mostDirect = sorted[1];
+  } else if (mostDirect === cheapest) {
+    // Only one option — mostDirect and cheapest are the same, return null for mostDirect
+    // so UI can show "Best Option" instead of duplicating
+    return { cheapest, mostDirect: null };
+  }
+
+  return { cheapest, mostDirect };
+}
+
+async function searchAndPickFlights(
   token: string,
   origin: string,
   destination: string,
   departureDate: string,
-  returnDate: string
-): Promise<FlightOption[] | null> {
-  const url = new URL(
-    "https://test.api.amadeus.com/v2/shopping/flight-offers"
-  );
+  returnDate: string,
+  supabaseClient: ReturnType<typeof createClient>
+): Promise<FlightPicks> {
+  // Check cache (6-hour TTL on result_json)
+  const cacheKey = `${origin}-${destination}-${departureDate}-${returnDate}`;
+  const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+
+  try {
+    const { data: cached } = await supabaseClient
+      .from("flight_cache")
+      .select("result_json, updated_at")
+      .eq("origin", origin)
+      .eq("destination", destination)
+      .eq("departure_date", departureDate)
+      .eq("return_date", returnDate)
+      .gte("updated_at", sixHoursAgo)
+      .single();
+
+    if (cached?.result_json) {
+      console.log(`fetch-flights: cache hit for ${cacheKey}`);
+      return cached.result_json as FlightPicks;
+    }
+  } catch (_) {
+    // Cache miss — proceed to fetch
+  }
+
+  // Fetch from Amadeus
+  const url = new URL("https://test.api.amadeus.com/v2/shopping/flight-offers");
   url.searchParams.set("originLocationCode", origin);
   url.searchParams.set("destinationLocationCode", destination);
   url.searchParams.set("departureDate", departureDate);
@@ -120,7 +185,7 @@ async function searchFlights(
   url.searchParams.set("adults", "1");
   url.searchParams.set("nonStop", "false");
   url.searchParams.set("currencyCode", "USD");
-  url.searchParams.set("max", "3");
+  url.searchParams.set("max", "10");
 
   const res = await fetch(url.toString(), {
     signal: AbortSignal.timeout(20000),
@@ -129,19 +194,18 @@ async function searchFlights(
 
   if (!res.ok) {
     console.error(`Flight search failed ${origin}->${destination}: ${res.status}`);
-    return null;
+    return { cheapest: null, mostDirect: null };
   }
 
   const data = await res.json();
   if (!data.data || data.data.length === 0) {
-    return null;
+    return { cheapest: null, mostDirect: null };
   }
 
-  // Parse up to 3 offers, sorted by price (Amadeus returns sorted by default)
-  const options: FlightOption[] = data.data.slice(0, 3).map((offer: any) => {
+  // Parse all offers
+  let options: FlightOption[] = data.data.map((offer: any) => {
     const itineraries = offer.itineraries || [];
 
-    // Collect all unique carrier codes
     const allCarriers = new Set<string>();
     for (const itin of itineraries) {
       for (const seg of (itin.segments || [])) {
@@ -152,7 +216,6 @@ async function searchFlights(
     const outbound = itineraries[0] ? parseItinerary(itineraries[0]) : {
       departure: "", arrival: "", duration: "", stops: 0, segments: [],
     };
-
     const returnLeg = itineraries[1] ? parseItinerary(itineraries[1]) : {
       departure: "", arrival: "", duration: "", stops: 0, segments: [],
     };
@@ -161,15 +224,45 @@ async function searchFlights(
       price: parseFloat(offer.price?.total || "0"),
       currency: offer.price?.currency || "USD",
       airlines: [...allCarriers],
+      originAirport: origin,
       outbound,
       return: returnLeg,
     };
   });
 
-  // Sort by price ascending
-  options.sort((a, b) => a.price - b.price);
+  // Filter to alliance carriers; fall back to all if none qualify
+  const allianceOptions = options.filter((o) =>
+    o.airlines.some((a) => ALL_ALLIANCE_CARRIERS.has(a))
+  );
+  if (allianceOptions.length > 0) {
+    options = allianceOptions;
+  } else {
+    console.log(`fetch-flights: no alliance carriers for ${origin}->${destination}, using all options`);
+  }
 
-  return options;
+  const picks = pickBestFlights(options);
+
+  // Write to cache
+  try {
+    await supabaseClient
+      .from("flight_cache")
+      .upsert(
+        {
+          origin,
+          destination,
+          departure_date: departureDate,
+          return_date: returnDate,
+          price: picks.cheapest?.price ?? null,
+          result_json: picks,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "origin,destination,departure_date,return_date" }
+      );
+  } catch (e) {
+    console.error("fetch-flights: cache write failed:", e);
+  }
+
+  return picks;
 }
 
 console.log("fetch-flights: module ready, registering handler");
@@ -182,6 +275,11 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const supabaseClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
     const FlightRequestSchema = z.object({
       origins: z.array(z.object({
         airport: z.string().regex(/^[A-Z]{3,4}$/, 'Invalid airport code'),
@@ -203,20 +301,19 @@ Deno.serve(async (req) => {
     const { origins, departureDate, returnDate, resorts } = parseResult.data;
     console.log("fetch-flights: request valid, origins:", origins.length, "resorts:", resorts.length);
 
-    // Build all origin->destination pairs
+    // Build all unique destination airports
     const destinationAirports = [
       ...new Set(resorts.map((r) => RESORT_AIRPORTS[r]).filter(Boolean)),
     ];
     console.log("fetch-flights: destination airports:", destinationAirports);
 
-    const results: Record<string, Record<string, FlightOption[] | null>> = {};
+    const results: Record<string, Record<string, FlightPicks | null>> = {};
 
     let amadeusToken: string;
     try {
       amadeusToken = await getAmadeusToken();
     } catch (e) {
       console.error("fetch-flights: Amadeus auth error:", e);
-      // Return empty results — generate-recommendations handles missing flight data gracefully
       for (const { airport: origin } of origins) {
         results[origin] = {};
         for (const dest of destinationAirports) {
@@ -238,10 +335,12 @@ Deno.serve(async (req) => {
           continue;
         }
         try {
-          const options = await searchFlights(amadeusToken, origin, dest, departureDate, returnDate);
-          results[origin][dest] = options;
+          const picks = await searchAndPickFlights(
+            amadeusToken, origin, dest, departureDate, returnDate, supabaseClient
+          );
+          results[origin][dest] = picks;
         } catch (err) {
-          console.error(`fetch-flights: flight search error ${origin}->${dest}:`, err);
+          console.error(`fetch-flights: error ${origin}->${dest}:`, err);
           results[origin][dest] = null;
         }
 

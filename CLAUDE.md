@@ -53,3 +53,39 @@ The typed Supabase client is at `src/integrations/supabase/client.ts`. The full 
 VITE_SUPABASE_URL
 VITE_SUPABASE_PUBLISHABLE_KEY
 ```
+
+## Deploy
+
+**Supabase project ref:** `exqitxkenafhllrgxhoj`
+
+```bash
+# Deploy an edge function
+npx supabase@2.76.15 functions deploy <function-name> --project-ref exqitxkenafhllrgxhoj
+
+# Push DB migrations  (NOTE: use --linked, NOT --project-ref — db push doesn't support that flag)
+npx supabase@2.76.15 db push --linked --yes
+```
+
+Edge functions live in `supabase/functions/<name>/index.ts` (Deno runtime).
+Migrations live in `supabase/migrations/`. Use timestamp prefix `YYYYMMDDHHMMSS_description.sql`.
+
+## Data format conventions
+
+**Vibe preferences** — stored in `trips.vibe` as a comma-separated key:value string:
+```
+energy:50,budget:25,skill:75,ski-in-out:false
+```
+Values are one of [0, 25, 50, 75, 100]. Parsed in edge function with `split(',')` then `split(':')`.
+
+**Airport codes** — stored in `guests.airport_code` as comma-separated IATA codes (1–3):
+```
+SFO,OAK,SJC
+```
+DB trigger validates format `^[A-Z]{3,4}(,[A-Z]{3,4}){0,2}$`. Display by splitting on `,` and joining with ` · `.
+
+**AI model:** Gemini 2.5 Flash via `generationConfig: { responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } }`
+
+**vibeAlignment** — JSON field in AI response, per-dimension preference fit score:
+```json
+{ "energy": { "score": 85, "label": "string" }, "budget": { ... }, "skill": { ... } }
+```

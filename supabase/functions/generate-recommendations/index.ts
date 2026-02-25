@@ -135,14 +135,13 @@ For each resort provide:
 1. matchScore (0-100)
 2. summary: 2-sentence summary for this group
 3. whyThisResort: 3-5 sentence explanation
-4. costBreakdown per person: flights_avg (estimate from origin cities), lodging_per_person, lift_tickets (with pass discounts), misc ($50-100/day), total
+4. costBreakdown per person: flights_avg (rough estimate — real prices will override this), lodging_per_person, lift_tickets (with pass discounts), misc ($50-100/day), total
 5. vibeMatchTags: array of emoji+label strings (e.g. "🎉 Après Scene ✓")
 6. itinerary: 5-day sample
 7. warnings: array of strings
 8. snowConditions: copy all snow stats exactly as provided in the resort data (preserve isHistorical, all depth/snowfall fields, and historicalDateRange if present)
 9. lodgingRecommendation: best option for the group
-10. flightDetailsPerGuest: estimated flights per guest based on their origin city
-11. vibeAlignment: for each of the three vibe dimensions (energy, budget, skill), score 0-100 how well this resort matches what the group REQUESTED (100=perfect match) and give a 1-sentence reason
+10. vibeAlignment: for each of the three vibe dimensions (energy, budget, skill), score 0-100 how well this resort matches what the group REQUESTED (100=perfect match) and give a 1-sentence reason
 
 Return ONLY valid JSON in this exact format:
 {
@@ -162,8 +161,7 @@ Return ONLY valid JSON in this exact format:
       "itinerary": [{ "day": 1, "morning": "string", "afternoon": "string", "evening": "string" }],
       "warnings": ["string"],
       "snowConditions": { "isHistorical": boolean, "currentSnowDepth": number, "last24hrSnowfall": number, "last7daysSnowfall": number, "seasonTotalSnowfall": number, "historicalSnowDepth": number, "historicalSnowfall": number, "historicalSeasonTotal": number, "historicalLast7dSnowfall": number, "historicalLast48hrSnowfall": number, "historicalDateRange": { "start": "string", "end": "string" } },
-      "lodgingRecommendation": { "name": "string", "type": "string", "units": number, "pricePerNight": number, "costPerPerson": number },
-      "flightDetailsPerGuest": [{ "guestName": "string", "origin": "string", "destinationAirport": "string", "estimatedCost": number, "airline": "string", "stops": number, "duration": "string" }]
+      "lodgingRecommendation": { "name": "string", "type": "string", "units": number, "pricePerNight": number, "costPerPerson": number }
     }
   ]
 }`;
@@ -271,16 +269,109 @@ Please recommend the top 3 resorts for this group.`;
         return rec;
       });
 
-      const flightSummary: Record<string, Record<string, number | null>> = {};
-      recommendations.recommendations.forEach((rec: any) => {
-        rec.flightDetailsPerGuest?.forEach((fd: any) => {
-          const key = `${fd.guestName} (${fd.origin})`;
-          if (!flightSummary[key]) flightSummary[key] = {};
-          flightSummary[key][rec.resortName] = fd.estimatedCost;
-        });
-      });
-      recommendations.flightSummary = flightSummary;
     }
+
+    // 8b. Fetch real flight data for the 3 recommended resorts
+    const recs = recommendations.recommendations || [];
+    const resortNames: string[] = recs.map((r: any) => r.resortName);
+
+    // Map each guest to their list of airport codes (comma-separated in DB)
+    const guestAirportMap: Record<string, string[]> = {};
+    for (const g of (guests || [])) {
+      const codes = (g.airport_code || '').split(',')
+        .map((c: string) => c.trim())
+        .filter((c: string) => /^[A-Z]{3,4}$/.test(c));
+      if (codes.length > 0) guestAirportMap[g.name] = codes;
+    }
+    const allGuestAirports = [...new Set(Object.values(guestAirportMap).flat())];
+
+    let flightsByOriginDest: Record<string, Record<string, any>> = {};
+    let resortAirportLookup: Record<string, string> = {};
+
+    if (allGuestAirports.length > 0 && resortNames.length > 0 && trip.date_start && trip.date_end) {
+      try {
+        console.log('Fetching real flights for', resortNames.length, 'resorts,', allGuestAirports.length, 'airports...');
+        const flightRes = await fetch(`${SUPABASE_URL}/functions/v1/fetch-flights`, {
+          method: 'POST',
+          signal: AbortSignal.timeout(60000),
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
+          body: JSON.stringify({
+            origins: allGuestAirports.map((a) => ({ airport: a })),
+            departureDate: trip.date_start,
+            returnDate: trip.date_end,
+            resorts: resortNames,
+          }),
+        });
+        if (flightRes.ok) {
+          const fd = await flightRes.json();
+          flightsByOriginDest = fd.flights || {};
+          resortAirportLookup = fd.resortAirports || {};
+        } else {
+          console.error('fetch-flights returned', flightRes.status);
+        }
+      } catch (e) {
+        console.error('Real flight fetch failed (non-fatal):', e);
+      }
+    }
+
+    // 8c. Attach realFlights to each rec and rebuild flightSummary from real prices
+    const flightSummary: Record<string, Record<string, number | null>> = {};
+
+    if (recommendations.recommendations) {
+      recommendations.recommendations = recommendations.recommendations.map((rec: any) => {
+        const destAirport = resortAirportLookup[rec.resortName];
+        if (!destAirport || Object.keys(flightsByOriginDest).length === 0) return rec;
+
+        const realFlights: Record<string, any> = {};
+        const prices: number[] = [];
+
+        for (const g of (guests || [])) {
+          const airports = guestAirportMap[g.name] || [];
+          let bestCheapest: any = null;
+          let bestMostDirect: any = null;
+
+          for (const airport of airports) {
+            const picks = flightsByOriginDest[airport]?.[destAirport];
+            if (!picks) continue;
+            if (picks.cheapest && (!bestCheapest || picks.cheapest.price < bestCheapest.price)) {
+              bestCheapest = picks.cheapest;
+            }
+            if (picks.mostDirect) {
+              const curStops = picks.mostDirect.outbound.stops + picks.mostDirect.return.stops;
+              const bestStops = bestMostDirect
+                ? bestMostDirect.outbound.stops + bestMostDirect.return.stops
+                : Infinity;
+              if (curStops < bestStops || (curStops === bestStops && picks.mostDirect.price < (bestMostDirect?.price ?? Infinity))) {
+                bestMostDirect = picks.mostDirect;
+              }
+            }
+          }
+
+          if (bestCheapest || bestMostDirect) {
+            realFlights[g.name] = { cheapest: bestCheapest, mostDirect: bestMostDirect };
+            if (bestCheapest?.price) prices.push(bestCheapest.price);
+
+            const guestKey = `${g.name} (${airports.join('/')})`;
+            if (!flightSummary[guestKey]) flightSummary[guestKey] = {};
+            flightSummary[guestKey][rec.resortName] = bestCheapest?.price ?? null;
+          }
+        }
+
+        rec.realFlights = realFlights;
+
+        // Update costBreakdown with real average
+        if (prices.length > 0 && rec.costBreakdown) {
+          const avgPrice = Math.round(prices.reduce((a: number, b: number) => a + b, 0) / prices.length);
+          const oldFlights = rec.costBreakdown.flights_avg ?? 0;
+          rec.costBreakdown.flights_avg = avgPrice;
+          rec.costBreakdown.total = Math.round(rec.costBreakdown.total - oldFlights + avgPrice);
+        }
+
+        return rec;
+      });
+    }
+
+    recommendations.flightSummary = flightSummary;
 
     // 9. Store
     const { error: insertError } = await supabase.from('recommendations').insert({
