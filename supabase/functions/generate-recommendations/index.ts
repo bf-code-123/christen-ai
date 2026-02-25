@@ -8,7 +8,7 @@ const corsHeaders = {
 };
 
 const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY")!;
-const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent";
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -93,6 +93,7 @@ serve(async (req) => {
     console.log('Step 3: Calling fetch-resort-data...');
     const resortRes = await fetch(`${SUPABASE_URL}/functions/v1/fetch-resort-data`, {
       method: 'POST',
+      signal: AbortSignal.timeout(45000),
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
       body: JSON.stringify({ regions: trip.geography, dateStart: trip.date_start, dateEnd: trip.date_end }),
     });
@@ -121,69 +122,67 @@ serve(async (req) => {
     }
     console.log('Step 4: Trip duration:', nights, 'nights');
 
-    // 5. Fetch lodging data
-    console.log('Step 5: Calling fetch-lodging...');
-    const lodgingRes = await fetch(`${SUPABASE_URL}/functions/v1/fetch-lodging`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
-      body: JSON.stringify({
-        resorts: resortData.resorts,
-        groupSize: trip.group_size,
-        lodgingPreference: trip.lodging_preference || 'Hotel',
-        nights,
+    // 5 & 6. Fetch lodging and flight data in parallel (both only need the resort list)
+    console.log('Step 5+6: Fetching lodging and flights in parallel...');
+    const origins = (guests || [])
+      .map((g: any) => {
+        let code = g.airport_code;
+        if (!code && g.origin_city) {
+          const parts = g.origin_city.split(',').map((p: string) => p.trim());
+          const candidate = parts.find((p: string) => /^[A-Z]{3,4}$/.test(p));
+          if (candidate) code = candidate;
+        }
+        return code ? { airport: code, guestName: g.name } : null;
+      })
+      .filter(Boolean) as { airport: string; guestName: string }[];
+    console.log('Step 5+6: Valid flight origins:', JSON.stringify(origins));
+
+    const [lodgingRes, flightRes] = await Promise.all([
+      fetch(`${SUPABASE_URL}/functions/v1/fetch-lodging`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(15000),
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
+        body: JSON.stringify({
+          resorts: resortData.resorts,
+          groupSize: trip.group_size,
+          lodgingPreference: trip.lodging_preference || 'Hotel',
+          nights,
+        }),
       }),
-    });
+      (origins.length > 0 && trip.date_start && trip.date_end)
+        ? fetch(`${SUPABASE_URL}/functions/v1/fetch-flights`, {
+            method: 'POST',
+            signal: AbortSignal.timeout(30000),
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
+            body: JSON.stringify({
+              origins,
+              departureDate: trip.date_start,
+              returnDate: trip.date_end,
+              resorts: resortData.resorts.map((r: any) => r.name),
+            }),
+          })
+        : Promise.resolve(null),
+    ]);
+
     if (!lodgingRes.ok) {
-      const lodgingErrBody = await lodgingRes.text();
-      console.error('Step 5 failed: fetch-lodging returned', lodgingRes.status, lodgingErrBody);
+      const body = await lodgingRes.text();
+      console.error('Step 5 failed: fetch-lodging returned', lodgingRes.status, body);
     }
     const lodgingData = await lodgingRes.json();
     console.log('Step 5: Lodging data fetched, keys:', Object.keys(lodgingData.lodging || {}).length);
 
-    // 6. Attempt to fetch flight data
-    console.log('Step 6: Preparing flight data fetch...');
     let flightData: any = null;
-    try {
-      const origins = (guests || [])
-        .map((g: any) => {
-          // Try airport_code first, then extract from origin_city (e.g. "NYC, LGA" or "Chicago, ORD")
-          let code = g.airport_code;
-          if (!code && g.origin_city) {
-            const parts = g.origin_city.split(',').map((p: string) => p.trim());
-            const candidate = parts.find((p: string) => /^[A-Z]{3,4}$/.test(p));
-            if (candidate) code = candidate;
-          }
-          return code ? { airport: code, guestName: g.name } : null;
-        })
-        .filter(Boolean) as { airport: string; guestName: string }[];
-
-      console.log('Step 6: Valid origins:', JSON.stringify(origins));
-
-      if (origins.length > 0 && trip.date_start && trip.date_end) {
-        console.log('Step 6: Calling fetch-flights...');
-        const flightRes = await fetch(`${SUPABASE_URL}/functions/v1/fetch-flights`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
-          body: JSON.stringify({
-            origins,
-            departureDate: trip.date_start,
-            returnDate: trip.date_end,
-            resorts: resortData.resorts.map((r: any) => r.name),
-          }),
-        });
-        console.log('Step 6: fetch-flights response status:', flightRes.status);
-        if (flightRes.ok) {
-          flightData = await flightRes.json();
-          console.log('Step 6: Flight data received, origins in data:', Object.keys(flightData.flights || {}).length);
-        } else {
-          const flightErrBody = await flightRes.text();
-          console.error('Step 6 failed: fetch-flights returned', flightRes.status, flightErrBody);
-        }
+    if (flightRes === null) {
+      console.log('Step 6: Skipping flights - no valid origins or missing dates');
+    } else {
+      console.log('Step 6: fetch-flights response status:', flightRes.status);
+      if (flightRes.ok) {
+        flightData = await flightRes.json();
+        console.log('Step 6: Flight data received, origins in data:', Object.keys(flightData.flights || {}).length);
       } else {
-        console.log('Step 6: Skipping flights - no valid origins or missing dates');
+        const flightErrBody = await flightRes.text();
+        console.error('Step 6 failed: fetch-flights returned', flightRes.status, flightErrBody);
       }
-    } catch (flightErr) {
-      console.error('Step 6 failed with exception:', flightErr);
     }
 
     // 7. Parse vibe string
@@ -290,6 +289,7 @@ Please recommend the top 3 resorts that best match this group's needs.`;
     console.log('Step 9: Prompt length - system:', systemPrompt.length, 'user:', userMessage.length);
     const aiResponse = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
       method: 'POST',
+      signal: AbortSignal.timeout(40000),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [
