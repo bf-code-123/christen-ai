@@ -7,7 +7,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY")!;
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent";
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -16,9 +17,6 @@ serve(async (req) => {
 
   try {
     console.log('Step 0: Starting generate-recommendations...');
-
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) throw new Error('LOVABLE_API_KEY is not configured');
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
     const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_PUBLISHABLE_KEY') || Deno.env.get('SUPABASE_ANON_KEY');
@@ -287,35 +285,35 @@ ${flightData ? `## Flight Options\n${Object.entries(flightData.flights || {}).ma
 
 Please recommend the top 3 resorts that best match this group's needs.`;
 
-    // 9. Call AI
-    console.log('Step 9: Calling AI gateway...');
+    // 9. Call AI (Direct Gemini API)
+    console.log('Step 9: Calling Gemini...');
     console.log('Step 9: Prompt length - system:', systemPrompt.length, 'user:', userMessage.length);
-    const aiResponse = await fetch(AI_GATEWAY_URL, {
+    const aiResponse = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-pro',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage },
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: `${systemPrompt}\n\n${userMessage}` }],
+          },
         ],
-        temperature: 0.7,
-        response_format: { type: "json_object" },
+        generationConfig: {
+          temperature: 0.7,
+          responseMimeType: 'application/json',
+        },
       }),
     });
 
     if (!aiResponse.ok) {
       const errBody = await aiResponse.text();
-      console.error('Step 9 failed: AI API returned', aiResponse.status, errBody.substring(0, 500));
-      throw new Error(`AI API call failed [${aiResponse.status}]: ${errBody}`);
+      console.error('Step 9 failed: Gemini API returned', aiResponse.status, errBody.substring(0, 500));
+      throw new Error(`Gemini API call failed [${aiResponse.status}]: ${errBody}`);
     }
     console.log('Step 9: AI response received, status:', aiResponse.status);
 
     const aiData = await aiResponse.json();
-    const content = aiData.choices?.[0]?.message?.content;
+    const content = aiData.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!content) {
       console.error('Step 9 failed: No content in AI response. Full response:', JSON.stringify(aiData).substring(0, 500));
       throw new Error('No content in AI response');
