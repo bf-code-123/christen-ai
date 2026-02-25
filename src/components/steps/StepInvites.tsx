@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Copy, Check, Plus, UserPlus, MapPin } from "lucide-react";
+import { Copy, Check, Plus, UserPlus, Plane, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
@@ -9,7 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 interface Guest {
   id: string;
   name: string;
-  origin_city: string | null;
+  airport_code: string | null;
   status: string | null;
 }
 
@@ -22,8 +22,7 @@ const StepInvites = ({ tripId, groupSize }: StepInvitesProps) => {
   const [guests, setGuests] = useState<Guest[]>([]);
   const [copied, setCopied] = useState(false);
   const [newName, setNewName] = useState("");
-  const [newCity, setNewCity] = useState("");
-  const [cityError, setCityError] = useState(false);
+  const [airports, setAirports] = useState<string[]>([""]);
   const { toast } = useToast();
 
   const inviteUrl = tripId
@@ -36,7 +35,7 @@ const StepInvites = ({ tripId, groupSize }: StepInvitesProps) => {
     const fetchGuests = async () => {
       const { data } = await supabase
         .from("guests")
-        .select("id, name, origin_city, status")
+        .select("id, name, airport_code, status")
         .eq("trip_id", tripId);
       if (data) setGuests(data);
     };
@@ -62,21 +61,37 @@ const StepInvites = ({ tripId, groupSize }: StepInvitesProps) => {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const updateAirport = (i: number, val: string) => {
+    const updated = [...airports];
+    updated[i] = val.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
+    setAirports(updated);
+  };
+
+  const addAirport = () => {
+    if (airports.length < 3) setAirports([...airports, ""]);
+  };
+
+  const removeAirport = (i: number) => {
+    setAirports(airports.filter((_, idx) => idx !== i));
+  };
+
   const addGuest = async () => {
     if (!newName.trim() || !tripId) return;
-    if (!newCity.trim()) {
-      setCityError(true);
-      return;
-    }
-    setCityError(false);
+
+    const validAirports = airports
+      .map((a) => a.trim().toUpperCase())
+      .filter((a) => /^[A-Z]{3,4}$/.test(a));
+
     await supabase.from("guests").insert({
       trip_id: tripId,
       name: newName.trim(),
-      origin_city: newCity.trim(),
+      airport_code: validAirports.length > 0 ? validAirports.join(",") : null,
+      origin_city: null,
       status: "done",
     });
+
     setNewName("");
-    setNewCity("");
+    setAirports([""]);
     toast({ title: "Guest added!" });
   };
 
@@ -90,60 +105,75 @@ const StepInvites = ({ tripId, groupSize }: StepInvitesProps) => {
       <div>
         <h2 className="text-2xl font-bold mb-1">Guest Invites</h2>
         <p className="text-muted-foreground text-sm">
-          Add your crew and where they're flying from — this directly affects flight costs and resort options.
+          Add your crew and their departure airports — we'll find the cheapest flights for everyone.
         </p>
       </div>
 
-      {/* Add Guest — prominent section first */}
+      {/* Add Guest */}
       <div className="glass-strong rounded-xl p-5 space-y-4 ring-1 ring-primary/30">
-        <div className="flex items-center gap-2 mb-1">
+        <div className="flex items-center gap-2">
           <UserPlus className="h-4 w-4 text-primary" />
           <label className="text-sm font-semibold text-foreground">Add Guest</label>
         </div>
-        <div className="space-y-3">
-          <Input
-            placeholder="Guest name"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            className="glass h-11 text-foreground placeholder:text-muted-foreground"
-          />
-          <div className="space-y-1">
-            <div className="relative">
-              <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-primary" />
-              <Input
-                placeholder="Origin city & airport (e.g. Denver, DEN)"
-                value={newCity}
-                onChange={(e) => {
-                  setNewCity(e.target.value);
-                  if (e.target.value.trim()) setCityError(false);
-                }}
-                className={`glass h-11 pl-9 text-foreground placeholder:text-muted-foreground ${
-                  cityError ? "ring-2 ring-destructive" : ""
-                }`}
-              />
+
+        <Input
+          placeholder="Guest name"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          className="glass h-11 text-foreground placeholder:text-muted-foreground"
+        />
+
+        <div className="space-y-2">
+          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            Departure Airport(s)
+          </label>
+          {airports.map((airport, i) => (
+            <div key={i} className="flex gap-2 items-center">
+              <div className="relative flex-1">
+                <Plane className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-primary" />
+                <Input
+                  placeholder={i === 0 ? "e.g. SFO" : i === 1 ? "e.g. OAK" : "e.g. SJC"}
+                  value={airport}
+                  onChange={(e) => updateAirport(i, e.target.value)}
+                  className="glass h-11 pl-9 text-foreground placeholder:text-muted-foreground font-mono tracking-widest"
+                  maxLength={4}
+                />
+              </div>
+              {i > 0 && (
+                <button
+                  onClick={() => removeAirport(i)}
+                  className="text-muted-foreground hover:text-destructive transition-colors p-1"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
             </div>
-            {cityError && (
-              <p className="text-xs text-destructive font-medium">
-                Origin city is required — it determines flight costs and options.
-              </p>
-            )}
-            <p className="text-xs text-muted-foreground">
-              ✈️ Required — flight costs are a major part of the budget calculation.
-            </p>
-          </div>
-          <Button onClick={addGuest} className="w-full gap-1">
-            <Plus className="h-4 w-4" /> Add Guest
-          </Button>
+          ))}
+          {airports.length < 3 && (
+            <button
+              onClick={addAirport}
+              className="text-xs text-primary flex items-center gap-1 hover:underline"
+            >
+              <Plus className="h-3 w-3" />
+              Add alternate airport
+            </button>
+          )}
         </div>
+
+        <Button
+          onClick={addGuest}
+          disabled={!newName.trim()}
+          className="w-full gap-1"
+        >
+          <Plus className="h-4 w-4" /> Add Guest
+        </Button>
       </div>
 
       {/* Guest List */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <label className="text-sm font-medium text-foreground">
-            Guests ({guests.length}/{groupSize})
-          </label>
-        </div>
+        <label className="text-sm font-medium text-foreground">
+          Guests ({guests.length}/{groupSize})
+        </label>
 
         <div className="space-y-2">
           {guests.map((g) => (
@@ -153,13 +183,14 @@ const StepInvites = ({ tripId, groupSize }: StepInvitesProps) => {
             >
               <div>
                 <div className="text-sm font-medium text-foreground">{g.name}</div>
-                {g.origin_city ? (
-                  <div className="text-xs text-muted-foreground flex items-center gap-1">
-                    <MapPin className="h-3 w-3" /> {g.origin_city}
+                {g.airport_code ? (
+                  <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                    <Plane className="h-3 w-3" />
+                    <span className="font-mono">{g.airport_code.split(",").join(" · ")}</span>
                   </div>
                 ) : (
-                  <div className="text-xs text-destructive font-medium flex items-center gap-1">
-                    <MapPin className="h-3 w-3" /> Missing origin city
+                  <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                    <Plane className="h-3 w-3" /> No airport added
                   </div>
                 )}
               </div>
@@ -184,7 +215,7 @@ const StepInvites = ({ tripId, groupSize }: StepInvitesProps) => {
         </div>
       </div>
 
-      {/* Invite Link — moved to bottom */}
+      {/* Invite Link */}
       {tripId && (
         <div className="glass rounded-xl p-5 space-y-3">
           <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">

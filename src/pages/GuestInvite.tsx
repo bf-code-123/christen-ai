@@ -1,31 +1,19 @@
 import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Mountain, CheckCircle2 } from "lucide-react";
+import { Mountain, CheckCircle2, Plane, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Slider } from "@/components/ui/slider";
 import { supabase } from "@/integrations/supabase/client";
-import { cn } from "@/lib/utils";
 import { format } from "date-fns";
-
-const skillLevels = ["Beginner", "Intermediate", "Advanced", "Expert"];
 
 const GuestInvite = () => {
   const { tripId } = useParams<{ tripId: string }>();
   const [trip, setTrip] = useState<any>(null);
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({
-    name: "",
-    originCity: "",
-    airportCode: "",
-    skillLevel: 1,
-    budgetMin: 1000,
-    budgetMax: 3000,
-    notes: "",
-  });
+  const [name, setName] = useState("");
+  const [airports, setAirports] = useState<string[]>([""]);
 
   useEffect(() => {
     const fetchTrip = async () => {
@@ -37,38 +25,39 @@ const GuestInvite = () => {
     fetchTrip();
   }, [tripId]);
 
+  const updateAirport = (i: number, val: string) => {
+    const updated = [...airports];
+    updated[i] = val.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
+    setAirports(updated);
+  };
+
+  const addAirport = () => {
+    if (airports.length < 3) setAirports([...airports, ""]);
+  };
+
+  const removeAirport = (i: number) => {
+    setAirports(airports.filter((_, idx) => idx !== i));
+  };
+
   const handleSubmit = async () => {
-    if (!tripId) return;
-
-    // Validate inputs
-    const name = form.name.trim().slice(0, 100);
-    if (!name) return;
-
-    const originCity = form.originCity.trim().slice(0, 100) || null;
-    const airportCode = form.airportCode.trim().toUpperCase();
-    const validAirport = /^[A-Z]{3,4}$/.test(airportCode) ? airportCode : null;
-    const notes = form.notes.trim().slice(0, 500) || null;
-
-    // Validate tripId is UUID format
+    if (!tripId || !name.trim()) return;
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tripId)) return;
 
-    // Ensure budget range is logical
-    const budgetMin = Math.max(0, Math.min(form.budgetMin, 100000));
-    const budgetMax = Math.max(budgetMin, Math.min(form.budgetMax, 100000));
+    const validAirports = airports
+      .map((a) => a.trim().toUpperCase())
+      .filter((a) => /^[A-Z]{3,4}$/.test(a));
 
     await supabase.from("guests").insert({
       trip_id: tripId,
-      name,
-      origin_city: originCity,
-      airport_code: validAirport,
-      skill_level: skillLevels[form.skillLevel].toLowerCase(),
-      budget_min: budgetMin,
-      budget_max: budgetMax,
-      notes,
+      name: name.trim().slice(0, 100),
+      airport_code: validAirports.length > 0 ? validAirports.join(",") : null,
+      origin_city: null,
       status: "done",
     });
     setSubmitted(true);
   };
+
+  const canSubmit = name.trim().length > 0 && airports.some((a) => /^[A-Z]{3,4}$/.test(a));
 
   if (loading) {
     return (
@@ -139,92 +128,65 @@ const GuestInvite = () => {
           animate={{ opacity: 1, y: 0 }}
           className="glass-strong rounded-2xl p-6 space-y-6"
         >
+          {/* Name */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">Your Name</label>
             <Input
               placeholder="Enter your name"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
               className="glass h-12 text-foreground placeholder:text-muted-foreground"
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">Origin City</label>
-              <Input
-                placeholder="e.g. San Francisco"
-                value={form.originCity}
-                onChange={(e) => setForm({ ...form, originCity: e.target.value })}
-                className="glass text-foreground placeholder:text-muted-foreground"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">Airport Code</label>
-              <Input
-                placeholder="e.g. SFO"
-                value={form.airportCode}
-                onChange={(e) => setForm({ ...form, airportCode: e.target.value.toUpperCase() })}
-                className="glass text-foreground placeholder:text-muted-foreground"
-                maxLength={4}
-              />
-            </div>
-          </div>
-
+          {/* Airports */}
           <div className="space-y-3">
-            <label className="text-sm font-medium text-foreground">Skill Level</label>
-            <Slider
-              min={0}
-              max={3}
-              step={1}
-              value={[form.skillLevel]}
-              onValueChange={([v]) => setForm({ ...form, skillLevel: v })}
-            />
-            <div className="flex justify-between">
-              {skillLevels.map((l, i) => (
-                <span
-                  key={l}
-                  className={cn(
-                    "text-xs font-medium",
-                    i === form.skillLevel ? "text-primary" : "text-muted-foreground"
+            <div>
+              <label className="text-sm font-medium text-foreground">Departure Airport(s)</label>
+              <p className="text-xs text-muted-foreground mt-1">
+                Add up to 3 airports — we'll find the cheapest flights from any of them.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              {airports.map((airport, i) => (
+                <div key={i} className="flex gap-2 items-center">
+                  <div className="relative flex-1">
+                    <Plane className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-primary" />
+                    <Input
+                      placeholder={i === 0 ? "e.g. SFO" : i === 1 ? "e.g. OAK" : "e.g. SJC"}
+                      value={airport}
+                      onChange={(e) => updateAirport(i, e.target.value)}
+                      className="glass h-11 pl-9 text-foreground placeholder:text-muted-foreground font-mono tracking-widest uppercase"
+                      maxLength={4}
+                    />
+                  </div>
+                  {i > 0 && (
+                    <button
+                      onClick={() => removeAirport(i)}
+                      className="text-muted-foreground hover:text-destructive transition-colors p-1"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
                   )}
-                >
-                  {l}
-                </span>
+                </div>
               ))}
             </div>
-          </div>
 
-          <div className="space-y-3">
-            <label className="text-sm font-medium text-foreground">
-              Personal Budget Range
-            </label>
-            <Slider
-              min={500}
-              max={10000}
-              step={250}
-              value={[form.budgetMin, form.budgetMax]}
-              onValueChange={([min, max]) => setForm({ ...form, budgetMin: min, budgetMax: max })}
-            />
-            <div className="text-center text-sm text-primary font-medium">
-              ${form.budgetMin.toLocaleString()} – ${form.budgetMax.toLocaleString()}
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">Notes (optional)</label>
-            <Textarea
-              placeholder="Any dietary restrictions, must-haves, etc."
-              value={form.notes}
-              onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              className="glass text-foreground placeholder:text-muted-foreground resize-none"
-              rows={3}
-            />
+            {airports.length < 3 && (
+              <button
+                onClick={addAirport}
+                className="text-xs text-primary flex items-center gap-1 hover:underline"
+              >
+                <Plus className="h-3 w-3" />
+                Add alternate airport
+              </button>
+            )}
           </div>
 
           <Button
             onClick={handleSubmit}
-            disabled={!form.name.trim()}
+            disabled={!canSubmit}
             size="lg"
             className="w-full h-12 font-semibold"
           >
