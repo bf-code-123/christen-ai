@@ -197,8 +197,7 @@ Please recommend the top 3 resorts for this group.`;
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${userMessage}` }] }],
-        generationConfig: { temperature: 0.7, responseMimeType: 'application/json' },
-        thinkingConfig: { thinkingBudget: 0 },
+        generationConfig: { temperature: 0.7, responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } },
       }),
     });
     if (!aiRes.ok) {
