@@ -2,7 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Snowflake, DollarSign, AlertTriangle, Calendar, ChevronDown,
-  Plane, Hotel, Ticket, Coffee, MapPin, Mountain
+  Plane, Hotel, Ticket, Coffee, MapPin, Mountain, TrendingUp, Info
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import MatchScoreRing from "@/components/MatchScoreRing";
@@ -76,6 +76,75 @@ const TerrainBar = ({ terrain }: { terrain: any }) => {
   );
 };
 
+const fmtSnowDate = (iso: string) => {
+  if (!iso) return '';
+  const [, mo, dy] = iso.split('-');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${months[+mo - 1]} ${+dy}`;
+};
+
+const SnowConditionsDisplay = ({ snow }: { snow: any }) => {
+  if (!snow) return null;
+
+  if (!snow.isHistorical) {
+    return (
+      <div className="flex flex-wrap gap-2">
+        <div className="flex items-center gap-1.5 bg-primary/10 text-primary text-xs font-semibold px-3 py-1.5 rounded-full">
+          <Mountain className="h-3.5 w-3.5" /> {snow.currentSnowDepth ?? 0}cm base
+        </div>
+        {(snow.last24hrSnowfall ?? 0) > 0 && (
+          <div className="flex items-center gap-1.5 bg-primary/10 text-primary text-xs font-semibold px-3 py-1.5 rounded-full">
+            <Snowflake className="h-3.5 w-3.5" /> +{snow.last24hrSnowfall}cm / 24hr
+          </div>
+        )}
+        <div className="flex items-center gap-1.5 bg-primary/10 text-primary text-xs font-semibold px-3 py-1.5 rounded-full">
+          <Snowflake className="h-3.5 w-3.5" /> +{snow.last7daysSnowfall ?? 0}cm / 7d
+        </div>
+        {(snow.seasonTotalSnowfall ?? 0) > 0 && (
+          <div className="flex items-center gap-1.5 bg-primary/10 text-primary text-xs font-semibold px-3 py-1.5 rounded-full">
+            <TrendingUp className="h-3.5 w-3.5" /> {snow.seasonTotalSnowfall}cm season
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Historical mode
+  const dr = snow.historicalDateRange;
+  const dateLabel = dr?.start
+    ? `${fmtSnowDate(dr.start)} – ${fmtSnowDate(dr.end)}, ${dr.start.slice(0, 4)}`
+    : null;
+
+  return (
+    <div className="space-y-2">
+      {dateLabel && (
+        <div className="flex items-center gap-1.5 bg-muted/60 rounded-lg px-2.5 py-1.5">
+          <Info className="h-3 w-3 text-muted-foreground shrink-0" />
+          <span className="text-[10px] text-muted-foreground">Based on {dateLabel} historical data</span>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <div className="flex items-center gap-1.5 bg-muted/60 text-muted-foreground text-xs font-semibold px-3 py-1.5 rounded-full">
+          <Mountain className="h-3.5 w-3.5" /> ~{snow.historicalSnowDepth ?? 0}cm avg base
+        </div>
+        {(snow.historicalLast7dSnowfall ?? 0) > 0 && (
+          <div className="flex items-center gap-1.5 bg-muted/60 text-muted-foreground text-xs font-semibold px-3 py-1.5 rounded-full">
+            <Snowflake className="h-3.5 w-3.5" /> +{snow.historicalLast7dSnowfall}cm / 7d prior
+          </div>
+        )}
+        <div className="flex items-center gap-1.5 bg-muted/60 text-muted-foreground text-xs font-semibold px-3 py-1.5 rounded-full">
+          <Snowflake className="h-3.5 w-3.5" /> {snow.historicalSnowfall ?? 0}cm trip window
+        </div>
+        {(snow.historicalSeasonTotal ?? 0) > 0 && (
+          <div className="flex items-center gap-1.5 bg-muted/60 text-muted-foreground text-xs font-semibold px-3 py-1.5 rounded-full">
+            <TrendingUp className="h-3.5 w-3.5" /> {snow.historicalSeasonTotal}cm season-to-date
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const ResortCard = ({ resort, rank, isBestPick }: ResortCardProps) => {
   const [showItinerary, setShowItinerary] = useState(false);
   const [showCosts, setShowCosts] = useState(false);
@@ -117,15 +186,8 @@ const ResortCard = ({ resort, rank, isBestPick }: ResortCardProps) => {
       </div>
 
       <div className="p-5 space-y-5">
-        {/* Snow Conditions Badge */}
-        <div className="flex flex-wrap gap-3">
-          <div className="flex items-center gap-1.5 bg-primary/10 text-primary text-xs font-semibold px-3 py-1.5 rounded-full">
-            <Snowflake className="h-3.5 w-3.5" /> {snow?.snowDepth || 0}cm base
-          </div>
-          <div className="flex items-center gap-1.5 bg-primary/10 text-primary text-xs font-semibold px-3 py-1.5 rounded-full">
-            <Snowflake className="h-3.5 w-3.5" /> +{snow?.recentSnowfall || 0}cm / 7d
-          </div>
-        </div>
+        {/* Snow Conditions */}
+        <SnowConditionsDisplay snow={snow} />
 
         {/* Pass Coverage */}
         {passes.length > 0 && (

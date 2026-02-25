@@ -139,7 +139,7 @@ For each resort provide:
 5. vibeMatchTags: array of emoji+label strings (e.g. "🎉 Après Scene ✓")
 6. itinerary: 5-day sample
 7. warnings: array of strings
-8. snowConditions from provided data
+8. snowConditions: copy all snow stats exactly as provided in the resort data (preserve isHistorical, all depth/snowfall fields, and historicalDateRange if present)
 9. lodgingRecommendation: best option for the group
 10. flightDetailsPerGuest: estimated flights per guest based on their origin city
 11. vibeAlignment: for each of the three vibe dimensions (energy, budget, skill), score 0-100 how well this resort matches what the group REQUESTED (100=perfect match) and give a 1-sentence reason
@@ -161,7 +161,7 @@ Return ONLY valid JSON in this exact format:
       },
       "itinerary": [{ "day": 1, "morning": "string", "afternoon": "string", "evening": "string" }],
       "warnings": ["string"],
-      "snowConditions": { "currentSnowDepth": number, "last24hrSnowfall": number, "last7daysSnowfall": number, "seasonTotalSnowfall": number, "isHistorical": boolean, "historicalSnowDepth": number, "historicalSnowfall": number },
+      "snowConditions": { "isHistorical": boolean, "currentSnowDepth": number, "last24hrSnowfall": number, "last7daysSnowfall": number, "seasonTotalSnowfall": number, "historicalSnowDepth": number, "historicalSnowfall": number, "historicalSeasonTotal": number, "historicalLast7dSnowfall": number, "historicalLast48hrSnowfall": number, "historicalDateRange": { "start": "string", "end": "string" } },
       "lodgingRecommendation": { "name": "string", "type": "string", "units": number, "pricePerNight": number, "costPerPerson": number },
       "flightDetailsPerGuest": [{ "guestName": "string", "origin": "string", "destinationAirport": "string", "estimatedCost": number, "airline": "string", "stops": number, "duration": "string" }]
     }
@@ -170,10 +170,15 @@ Return ONLY valid JSON in this exact format:
 
     const resortLines = topResorts.map((r: any) => {
       const snow = r.snow || {};
-      const depth = snow.currentSnowDepth ?? snow.historicalSnowDepth ?? 0;
-      const recent = snow.last7daysSnowfall ?? snow.historicalSnowfall ?? 0;
-      const historical = snow.isHistorical ? ' (historical)' : '';
-      return `- ${r.name} (${r.country}): Pass: ${r.pass.join('/')}, Terrain: ${r.terrain.beginner}%beg/${r.terrain.intermediate}%int/${r.terrain.advanced}%adv/${r.terrain.expert}%exp, Lift: $${r.liftTicket}, Snow depth: ${depth}cm, 7-day snowfall: ${recent}cm${historical}, Après: ${r.apresScore}/10, Non-skier: ${r.nonSkierScore}/10, Ski-in/out: ${r.skiInOut}, Vibes: ${r.vibeTags.join(', ')}`;
+      let snowStr: string;
+      if (snow.isHistorical) {
+        const dr = snow.historicalDateRange;
+        const dateLabel = dr?.start ? `${dr.start}–${dr.end}` : 'historical';
+        snowStr = `[Historical ${dateLabel}] Avg depth: ~${snow.historicalSnowDepth ?? 0}cm, 7d prior: +${snow.historicalLast7dSnowfall ?? 0}cm, Trip window: ${snow.historicalSnowfall ?? 0}cm, Season-to-date: ${snow.historicalSeasonTotal ?? 0}cm`;
+      } else {
+        snowStr = `Depth: ${snow.currentSnowDepth ?? 0}cm, 24hr: +${snow.last24hrSnowfall ?? 0}cm, 7d: +${snow.last7daysSnowfall ?? 0}cm, Season: ${snow.seasonTotalSnowfall ?? 0}cm`;
+      }
+      return `- ${r.name} (${r.country}): Pass: ${r.pass.join('/')}, Terrain: ${r.terrain.beginner}%beg/${r.terrain.intermediate}%int/${r.terrain.advanced}%adv/${r.terrain.expert}%exp, Lift: $${r.liftTicket}, Snow: ${snowStr}, Après: ${r.apresScore}/10, Non-skier: ${r.nonSkierScore}/10, Ski-in/out: ${r.skiInOut}, Vibes: ${r.vibeTags.join(', ')}`;
     }).join('\n');
 
     const lodgingLines = Object.entries(lodgingByResort).map(([name, data]: [string, any]) => {

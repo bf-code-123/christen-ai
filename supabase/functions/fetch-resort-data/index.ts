@@ -127,8 +127,12 @@ interface CurrentSnowData {
 
 interface HistoricalSnowData {
   isHistorical: true;
-  historicalSnowDepth: number;
-  historicalSnowfall: number;
+  historicalSnowDepth: number;        // avg depth during mapped trip dates
+  historicalSnowfall: number;         // total snowfall during mapped trip window
+  historicalSeasonTotal: number;      // season-to-date total as of mapped trip end
+  historicalLast7dSnowfall: number;   // 7-day snowfall leading into mapped trip dates
+  historicalLast48hrSnowfall: number; // 48hr snowfall before mapped trip dates
+  historicalDateRange: { start: string; end: string }; // actual historical dates used
 }
 
 type SnowData = CurrentSnowData | HistoricalSnowData;
@@ -196,30 +200,99 @@ async function fetchCurrentSnowData(resort: typeof RESORTS[0]): Promise<CurrentS
 }
 
 async function fetchHistoricalSnowData(resort: typeof RESORTS[0], dateStart: string, dateEnd: string): Promise<HistoricalSnowData> {
+  const emptyResult: HistoricalSnowData = {
+    isHistorical: true,
+    historicalSnowDepth: 0,
+    historicalSnowfall: 0,
+    historicalSeasonTotal: 0,
+    historicalLast7dSnowfall: 0,
+    historicalLast48hrSnowfall: 0,
+    historicalDateRange: { start: '', end: '' },
+  };
   try {
-    const { start, end } = getHistoricalDateRange(dateStart, dateEnd);
-    const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${resort.lat}&longitude=${resort.lng}&start_date=${start}&end_date=${end}&daily=snowfall_sum&hourly=snow_depth&timezone=auto`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Archive API error: ${res.status}`);
-    const data = await res.json();
+    let { start, end } = getHistoricalDateRange(dateStart, dateEnd);
 
-    const dailySnowfall: number[] = data.daily?.snowfall_sum || [];
-    const historicalSnowfall = dailySnowfall.reduce((a, b) => a + (b || 0), 0);
+    // Safety check: archive has ~5 day lag. If historical dates are within last 7 days,
+    // subtract one full year to use the prior completed season instead.
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    if (new Date(start) > sevenDaysAgo) {
+      const s = new Date(start); s.setFullYear(s.getFullYear() - 1); start = formatDate(s);
+      const e = new Date(end); e.setFullYear(e.getFullYear() - 1); end = formatDate(e);
+    }
 
-    const hourlyDepths: number[] = data.hourly?.snow_depth || [];
-    const validDepths = hourlyDepths.filter((d) => d != null && d >= 0);
-    const historicalSnowDepth = validDepths.length > 0
-      ? validDepths.reduce((a, b) => a + b, 0) / validDepths.length
+    // Main fetch: 7 days before trip start through trip end (covers pre-trip + trip window)
+    const preTripStart = new Date(start);
+    preTripStart.setDate(preTripStart.getDate() - 7);
+    const preTripStartStr = formatDate(preTripStart);
+
+    const mainUrl = `https://archive-api.open-meteo.com/v1/archive?latitude=${resort.lat}&longitude=${resort.lng}&start_date=${preTripStartStr}&end_date=${end}&daily=snowfall_sum&hourly=snow_depth&timezone=auto`;
+    const mainRes = await fetch(mainUrl, { signal: AbortSignal.timeout(8000) });
+    if (!mainRes.ok) throw new Error(`Archive API error: ${mainRes.status}`);
+    const mainData = await mainRes.json();
+
+    const dailyDates: string[] = mainData.daily?.time || [];
+    const dailySnowfall: number[] = mainData.daily?.snowfall_sum || [];
+    const hourlyTimes: string[] = mainData.hourly?.time || [];
+    const hourlyDepths: number[] = mainData.hourly?.snow_depth || [];
+
+    // Split daily data into pre-trip (7 days before) and trip window
+    const tripStartIdx = dailyDates.findIndex(d => d >= start);
+    const splitIdx = tripStartIdx >= 0 ? tripStartIdx : 7;
+
+    // Pre-trip stats
+    const preTripSlice = dailySnowfall.slice(0, splitIdx);
+    const historicalLast7dSnowfall = preTripSlice.reduce((a, b) => a + (b || 0), 0);
+    const historicalLast48hrSnowfall = preTripSlice.slice(-2).reduce((a, b) => a + (b || 0), 0);
+
+    // Trip window snowfall
+    const tripSlice = dailySnowfall.slice(splitIdx);
+    const historicalSnowfall = tripSlice.reduce((a, b) => a + (b || 0), 0);
+
+    // Avg snow depth during trip window (hourly data)
+    const tripStartHourIdx = hourlyTimes.findIndex(t => t >= `${start}T00:00`);
+    const tripHourlyDepths = (tripStartHourIdx >= 0 ? hourlyDepths.slice(tripStartHourIdx) : hourlyDepths)
+      .filter(d => d != null && d >= 0);
+    const historicalSnowDepth = tripHourlyDepths.length > 0
+      ? tripHourlyDepths.reduce((a, b) => a + b, 0) / tripHourlyDepths.length
       : 0;
+
+    // Season-to-date: Nov 1 through day before trip start, then add trip window
+    const histStartObj = new Date(start);
+    const histStartMonth = histStartObj.getMonth(); // 0-indexed
+    const seasonYear = histStartMonth >= 10 ? histStartObj.getFullYear() : histStartObj.getFullYear() - 1;
+    const seasonNov1 = `${seasonYear}-11-01`;
+    let historicalSeasonTotal = 0;
+    if (seasonNov1 < start) {
+      try {
+        const dayBeforeTrip = new Date(start);
+        dayBeforeTrip.setDate(dayBeforeTrip.getDate() - 1);
+        const seasonUrl = `https://archive-api.open-meteo.com/v1/archive?latitude=${resort.lat}&longitude=${resort.lng}&start_date=${seasonNov1}&end_date=${formatDate(dayBeforeTrip)}&daily=snowfall_sum&timezone=auto`;
+        const seasonRes = await fetch(seasonUrl, { signal: AbortSignal.timeout(8000) });
+        if (seasonRes.ok) {
+          const seasonData = await seasonRes.json();
+          const seasonDaily: number[] = seasonData.daily?.snowfall_sum || [];
+          historicalSeasonTotal = seasonDaily.reduce((a, b) => a + (b || 0), 0);
+        }
+      } catch {
+        // Non-fatal — season total stays 0
+      }
+    }
+    // Add trip window to complete season-to-date through end of trip
+    historicalSeasonTotal += historicalSnowfall;
 
     return {
       isHistorical: true,
       historicalSnowDepth: Math.round(historicalSnowDepth * 10) / 10,
       historicalSnowfall: Math.round(historicalSnowfall * 10) / 10,
+      historicalSeasonTotal: Math.round(historicalSeasonTotal * 10) / 10,
+      historicalLast7dSnowfall: Math.round(historicalLast7dSnowfall * 10) / 10,
+      historicalLast48hrSnowfall: Math.round(historicalLast48hrSnowfall * 10) / 10,
+      historicalDateRange: { start, end },
     };
   } catch (err) {
     console.error(`Historical snow fetch failed for ${resort.name}:`, err);
-    return { isHistorical: true, historicalSnowDepth: 0, historicalSnowfall: 0 };
+    return emptyResult;
   }
 }
 
@@ -246,7 +319,7 @@ async function fetchSnowData(
       } catch (err) {
         console.error(`Snow fetch failed for ${resort.name}:`, err);
         snowData[resort.name] = mode === "historical"
-          ? { isHistorical: true, historicalSnowDepth: 0, historicalSnowfall: 0 }
+          ? { isHistorical: true, historicalSnowDepth: 0, historicalSnowfall: 0, historicalSeasonTotal: 0, historicalLast7dSnowfall: 0, historicalLast48hrSnowfall: 0, historicalDateRange: { start: '', end: '' } }
           : { isHistorical: false, currentSnowDepth: 0, last24hrSnowfall: 0, last7daysSnowfall: 0, seasonTotalSnowfall: 0 };
       }
     }));
@@ -295,7 +368,7 @@ serve(async (req) => {
     const enrichedResorts = filteredResorts.map(resort => ({
       ...resort,
       snow: snowData[resort.name] || (mode === "historical"
-        ? { isHistorical: true, historicalSnowDepth: 0, historicalSnowfall: 0 }
+        ? { isHistorical: true, historicalSnowDepth: 0, historicalSnowfall: 0, historicalSeasonTotal: 0, historicalLast7dSnowfall: 0, historicalLast48hrSnowfall: 0, historicalDateRange: { start: '', end: '' } }
         : { isHistorical: false, currentSnowDepth: 0, last24hrSnowfall: 0, last7daysSnowfall: 0, seasonTotalSnowfall: 0 }),
     }));
 
