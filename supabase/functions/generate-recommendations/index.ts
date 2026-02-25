@@ -147,8 +147,17 @@ serve(async (req) => {
     let flightData: any = null;
     try {
       const origins = (guests || [])
-        .filter((g: any) => g.airport_code && /^[A-Z]{3,4}$/.test(g.airport_code))
-        .map((g: any) => ({ airport: g.airport_code, guestName: g.name }));
+        .map((g: any) => {
+          // Try airport_code first, then extract from origin_city (e.g. "NYC, LGA" or "Chicago, ORD")
+          let code = g.airport_code;
+          if (!code && g.origin_city) {
+            const parts = g.origin_city.split(',').map((p: string) => p.trim());
+            const candidate = parts.find((p: string) => /^[A-Z]{3,4}$/.test(p));
+            if (candidate) code = candidate;
+          }
+          return code ? { airport: code, guestName: g.name } : null;
+        })
+        .filter(Boolean) as { airport: string; guestName: string }[];
 
       console.log('Step 6: Valid origins:', JSON.stringify(origins));
 
@@ -390,9 +399,13 @@ Please recommend the top 3 resorts that best match this group's needs.`;
       'tripId is required': 'Trip ID is required',
       'Forbidden: you do not own this trip': 'Access denied',
     };
-    const safeMsg = safeMessages[msg] || 'Failed to generate recommendations. Please try again.';
+    let safeMsg = safeMessages[msg] || 'Failed to generate recommendations. Please try again.';
+    // Surface credits/quota errors clearly
+    if (msg.includes('402') || msg.includes('payment_required') || msg.includes('credits')) {
+      safeMsg = 'AI service is temporarily unavailable (quota exceeded). Please try again later.';
+    }
     return new Response(JSON.stringify({ error: safeMsg }), {
-      status: 500,
+      status: msg.includes('402') ? 503 : 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
