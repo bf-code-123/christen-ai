@@ -1,4 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+console.log("fetch-flights: module loading");
+
 import { z } from "https://esm.sh/zod@3.23.8";
 
 const corsHeaders = {
@@ -56,21 +57,17 @@ interface FlightOption {
   return: FlightLeg;
 }
 
-interface FlightRequest {
-  origins: { airport: string; guestName?: string }[];
-  departureDate: string;
-  returnDate: string;
-  resorts: string[];
-}
-
 async function getAmadeusToken(): Promise<string> {
   const clientId = Deno.env.get("AMADEUS_CLIENT_ID")!;
   const clientSecret = Deno.env.get("AMADEUS_CLIENT_SECRET")!;
+
+  console.log("fetch-flights: requesting Amadeus token, clientId present:", !!clientId);
 
   const res = await fetch(
     "https://test.api.amadeus.com/v1/security/oauth2/token",
     {
       method: "POST",
+      signal: AbortSignal.timeout(15000),
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: `grant_type=client_credentials&client_id=${clientId}&client_secret=${clientSecret}`,
     }
@@ -78,10 +75,11 @@ async function getAmadeusToken(): Promise<string> {
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Amadeus auth failed: ${err}`);
+    throw new Error(`Amadeus auth failed (${res.status}): ${err}`);
   }
 
   const data = await res.json();
+  console.log("fetch-flights: Amadeus token obtained");
   return data.access_token;
 }
 
@@ -125,6 +123,7 @@ async function searchFlights(
   url.searchParams.set("max", "3");
 
   const res = await fetch(url.toString(), {
+    signal: AbortSignal.timeout(20000),
     headers: { Authorization: `Bearer ${token}` },
   });
 
@@ -173,16 +172,16 @@ async function searchFlights(
   return options;
 }
 
-serve(async (req) => {
+console.log("fetch-flights: module ready, registering handler");
+
+Deno.serve(async (req) => {
+  console.log("fetch-flights: handler invoked, method:", req.method);
+
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    // No JWT validation needed — this function is called server-side by generate-recommendations,
-    // which already authenticates the user. Similar to fetch-resort-data and fetch-lodging.
-
-
     const FlightRequestSchema = z.object({
       origins: z.array(z.object({
         airport: z.string().regex(/^[A-Z]{3,4}$/, 'Invalid airport code'),
@@ -195,28 +194,29 @@ serve(async (req) => {
 
     const parseResult = FlightRequestSchema.safeParse(await req.json());
     if (!parseResult.success) {
+      console.error("fetch-flights: invalid request", parseResult.error.flatten());
       return new Response(
         JSON.stringify({ error: "Invalid request data" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
     const { origins, departureDate, returnDate, resorts } = parseResult.data;
+    console.log("fetch-flights: request valid, origins:", origins.length, "resorts:", resorts.length);
 
     // Build all origin->destination pairs
     const destinationAirports = [
       ...new Set(resorts.map((r) => RESORT_AIRPORTS[r]).filter(Boolean)),
     ];
+    console.log("fetch-flights: destination airports:", destinationAirports);
 
-    // TODO: Re-enable flight caching once flight_cache table is updated to store JSONB details
-    // For now, always fetch fresh data from Amadeus to get rich flight details
     const results: Record<string, Record<string, FlightOption[] | null>> = {};
 
     let amadeusToken: string;
     try {
       amadeusToken = await getAmadeusToken();
     } catch (e) {
-      console.error("Amadeus auth error:", e);
-      // Return empty results
+      console.error("fetch-flights: Amadeus auth error:", e);
+      // Return empty results — generate-recommendations handles missing flight data gracefully
       for (const { airport: origin } of origins) {
         results[origin] = {};
         for (const dest of destinationAirports) {
@@ -234,7 +234,6 @@ serve(async (req) => {
       if (!results[origin]) results[origin] = {};
       for (const dest of destinationAirports) {
         if (origin === dest) {
-          // Skip same-airport routes
           results[origin][dest] = null;
           continue;
         }
@@ -242,7 +241,7 @@ serve(async (req) => {
           const options = await searchFlights(amadeusToken, origin, dest, departureDate, returnDate);
           results[origin][dest] = options;
         } catch (err) {
-          console.error(`Flight search error ${origin}->${dest}:`, err);
+          console.error(`fetch-flights: flight search error ${origin}->${dest}:`, err);
           results[origin][dest] = null;
         }
 
@@ -251,12 +250,13 @@ serve(async (req) => {
       }
     }
 
+    console.log("fetch-flights: done, returning results");
     return new Response(
       JSON.stringify({ flights: results, resortAirports: RESORT_AIRPORTS }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {
-    console.error("fetch-flights error:", err);
+    console.error("fetch-flights: unhandled error:", err);
     return new Response(
       JSON.stringify({ error: "Failed to fetch flight data. Please try again." }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
