@@ -29,16 +29,18 @@ const StepInvites = ({ tripId, groupSize }: StepInvitesProps) => {
     ? `${window.location.origin}/invite/${tripId}`
     : "";
 
+  const fetchGuests = async () => {
+    if (!tripId) return;
+    const { data } = await supabase
+      .from("guests")
+      .select("id, name, airport_code, status")
+      .eq("trip_id", tripId);
+    if (data) setGuests(data);
+  };
+
   useEffect(() => {
     if (!tripId) return;
 
-    const fetchGuests = async () => {
-      const { data } = await supabase
-        .from("guests")
-        .select("id, name, airport_code, status")
-        .eq("trip_id", tripId);
-      if (data) setGuests(data);
-    };
     fetchGuests();
 
     const channel = supabase
@@ -82,7 +84,7 @@ const StepInvites = ({ tripId, groupSize }: StepInvitesProps) => {
       .map((a) => a.trim().toUpperCase())
       .filter((a) => /^[A-Z]{3,4}$/.test(a));
 
-    await supabase.from("guests").insert({
+    const { error } = await supabase.from("guests").insert({
       trip_id: tripId,
       name: newName.trim(),
       airport_code: validAirports.length > 0 ? validAirports.join(",") : null,
@@ -90,9 +92,16 @@ const StepInvites = ({ tripId, groupSize }: StepInvitesProps) => {
       status: "done",
     });
 
+    if (error) {
+      toast({ title: "Failed to add guest", description: error.message, variant: "destructive" });
+      return;
+    }
+
     setNewName("");
     setAirports([""]);
     toast({ title: "Guest added!" });
+    // Manually refresh in case realtime is slow or not connected
+    fetchGuests();
   };
 
   return (
