@@ -9,6 +9,20 @@ const corsHeaders = {
 const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY")!;
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 
+// Translate numeric vibe value (0–100) to a human-readable label.
+// Handles both new discrete values (0,25,50,75,100) and legacy continuous values.
+function vibeLabel(dimension: string, value: number): string {
+  const labelMap: Record<string, string[]> = {
+    energy: ["Very Relaxed", "Relaxed", "Balanced", "Lively", "Party"],
+    budget: ["Budget", "Value", "Moderate", "Upscale", "Luxury"],
+    skill:  ["Beginner Focus", "Mostly Beginner", "All Levels", "Advanced Friendly", "Experts Only"],
+  };
+  const steps = [0, 25, 50, 75, 100];
+  const idx = steps.reduce((best, step, i) =>
+    Math.abs(step - value) < Math.abs(steps[best] - value) ? i : best, 0);
+  return labelMap[dimension]?.[idx] ?? String(value);
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -128,6 +142,7 @@ For each resort provide:
 8. snowConditions from provided data
 9. lodgingRecommendation: best option for the group
 10. flightDetailsPerGuest: estimated flights per guest based on their origin city
+11. vibeAlignment: for each of the three vibe dimensions (energy, budget, skill), score 0-100 how well this resort matches what the group REQUESTED (100=perfect match) and give a 1-sentence reason
 
 Return ONLY valid JSON in this exact format:
 {
@@ -139,6 +154,11 @@ Return ONLY valid JSON in this exact format:
       "whyThisResort": "string",
       "costBreakdown": { "flights_avg": number, "lodging_per_person": number, "lift_tickets": number, "misc": number, "total": number },
       "vibeMatchTags": ["string"],
+      "vibeAlignment": {
+        "energy": { "score": number, "label": "string" },
+        "budget": { "score": number, "label": "string" },
+        "skill":  { "score": number, "label": "string" }
+      },
       "itinerary": [{ "day": 1, "morning": "string", "afternoon": "string", "evening": "string" }],
       "warnings": ["string"],
       "snowConditions": { "currentSnowDepth": number, "last24hrSnowfall": number, "last7daysSnowfall": number, "seasonTotalSnowfall": number, "isHistorical": boolean, "historicalSnowDepth": number, "historicalSnowfall": number },
@@ -167,12 +187,20 @@ Return ONLY valid JSON in this exact format:
       `- ${g.name}: from ${g.origin_city || 'unknown'} (airport: ${g.airport_code || 'unknown'}), skill: ${g.skill_level}, budget: $${g.budget_min ?? '?'}-$${g.budget_max ?? '?'}`
     ).join('\n') || 'No guests submitted yet.';
 
+    const energyVal = parseInt(vibeObj.energy || '50');
+    const budgetVibeVal = parseInt(vibeObj.budget || '50');
+    const skillVibeVal = parseInt(vibeObj.skill || '50');
+
     const userMessage = `## Trip Details
 - Name: ${trip.trip_name}
 - Dates: ${trip.date_start || 'flexible'} to ${trip.date_end || 'flexible'} (${nights} nights)
 - Group size: ${trip.group_size}
 - Geography preference: ${(trip.geography || []).join(', ') || 'No preference'}
-- Vibe: Energy ${vibeObj.energy || '50'}/100 (0=relaxed, 100=party), Budget ${vibeObj.budget || '50'}/100 (0=value, 100=luxury), Skill ${vibeObj.skill || '50'}/100, Ski-in/out: ${vibeObj['ski-in-out'] || 'false'}
+- Vibe preferences (use these to score vibeAlignment):
+  - Energy: ${vibeLabel('energy', energyVal)} (${energyVal}/100 — 0=very relaxed/mellow, 100=party/après-heavy)
+  - Budget Vibe: ${vibeLabel('budget', budgetVibeVal)} (${budgetVibeVal}/100 — 0=budget-conscious, 100=luxury)
+  - Skill Mix: ${vibeLabel('skill', skillVibeVal)} (${skillVibeVal}/100 — 0=beginner-focused, 100=experts only)
+  - Ski-in/out required: ${vibeObj['ski-in-out'] || 'false'}
 - Skill range: ${trip.skill_min} to ${trip.skill_max}
 - Budget: $${trip.budget_amount} ${trip.budget_type === 'per_person' ? 'per person' : 'total'}
 - Pass types: ${(trip.pass_types || []).join(', ') || 'None'}

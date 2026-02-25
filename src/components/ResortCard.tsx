@@ -13,6 +13,44 @@ interface ResortCardProps {
   isBestPick?: boolean;
 }
 
+const VIBE_DIMS = [
+  { key: "energy", icon: "⚡", label: "Energy" },
+  { key: "budget", icon: "💰", label: "Budget Vibe" },
+  { key: "skill",  icon: "🎿", label: "Skill Mix" },
+] as const;
+
+const VibeAlignmentPanel = ({ alignment }: { alignment: any }) => {
+  if (!alignment) return null;
+  return (
+    <div className="glass rounded-xl p-4 space-y-3">
+      <div className="text-xs font-semibold text-foreground uppercase tracking-wider">Preference Fit</div>
+      <div className="space-y-3">
+        {VIBE_DIMS.map((d) => {
+          const item = alignment[d.key];
+          if (!item) return null;
+          const score: number = item.score ?? 0;
+          const barColor = score >= 75 ? "bg-success" : score >= 50 ? "bg-primary" : "bg-warning";
+          const textColor = score >= 75 ? "text-success" : score >= 50 ? "text-primary" : "text-warning";
+          return (
+            <div key={d.key} className="space-y-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">{d.icon} {d.label}</span>
+                <span className={`font-bold tabular-nums ${textColor}`}>{score}%</span>
+              </div>
+              <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${score}%` }} />
+              </div>
+              {item.label && (
+                <p className="text-[10px] text-muted-foreground leading-snug">{item.label}</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 const TerrainBar = ({ terrain }: { terrain: any }) => {
   if (!terrain) return null;
   const segments = [
@@ -165,6 +203,9 @@ const ResortCard = ({ resort, rank, isBestPick }: ResortCardProps) => {
             ))}
           </div>
         )}
+
+        {/* Preference Fit */}
+        <VibeAlignmentPanel alignment={resort.vibeAlignment} />
 
         {/* Terrain Breakdown */}
         {terrain && <TerrainBar terrain={terrain} />}

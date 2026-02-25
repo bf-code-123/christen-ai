@@ -5,7 +5,6 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { Switch } from "@/components/ui/switch";
-import { Slider } from "@/components/ui/slider";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import type { DateRange } from "react-day-picker";
@@ -20,10 +19,46 @@ const flexOptions = [
 
 const geographies = ["North America", "Europe", "Japan/Asia", "No Preference"];
 
-const vibeSliders = [
-  { key: "vibeEnergy" as const, left: "🧘 Relaxed", right: "🎉 Party" },
-  { key: "vibeBudget" as const, left: "💰 Value", right: "✨ Luxury" },
-  { key: "vibeSkill" as const, left: "🟢 Beginner Friendly", right: "🏆 Experts Only" },
+type VibeKey = "vibeEnergy" | "vibeBudget" | "vibeSkill";
+
+const vibeOptions: Array<{
+  key: VibeKey;
+  label: string;
+  options: Array<{ value: number; label: string }>;
+}> = [
+  {
+    key: "vibeEnergy",
+    label: "Energy",
+    options: [
+      { value: 0, label: "Mellow" },
+      { value: 25, label: "Relaxed" },
+      { value: 50, label: "Balanced" },
+      { value: 75, label: "Lively" },
+      { value: 100, label: "Party" },
+    ],
+  },
+  {
+    key: "vibeBudget",
+    label: "Budget Vibe",
+    options: [
+      { value: 0, label: "Budget" },
+      { value: 25, label: "Value" },
+      { value: 50, label: "Moderate" },
+      { value: 75, label: "Upscale" },
+      { value: 100, label: "Luxury" },
+    ],
+  },
+  {
+    key: "vibeSkill",
+    label: "Skill Mix",
+    options: [
+      { value: 0, label: "Beg Only" },
+      { value: 25, label: "Beg-heavy" },
+      { value: 50, label: "All Levels" },
+      { value: 75, label: "Adv-heavy" },
+      { value: 100, label: "Expert" },
+    ],
+  },
 ];
 
 interface StepBasicsProps {
@@ -206,22 +241,30 @@ const StepBasics = ({ data, onChange }: StepBasicsProps) => {
         </div>
       </div>
 
-      {/* Trip Vibe Sliders */}
+      {/* Trip Vibe */}
       <div className="space-y-5">
         <label className="text-sm font-medium text-foreground">Trip Vibe</label>
-        {vibeSliders.map((s) => (
+        {vibeOptions.map((s) => (
           <div key={s.key} className="glass rounded-xl p-4 space-y-3">
-            <div className="flex justify-between text-xs font-medium">
-              <span className="text-muted-foreground">{s.left}</span>
-              <span className="text-muted-foreground">{s.right}</span>
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              {s.label}
             </div>
-            <Slider
-              min={0}
-              max={100}
-              step={1}
-              value={[data[s.key]]}
-              onValueChange={([v]) => onChange({ [s.key]: v })}
-            />
+            <div className="grid grid-cols-5 gap-1.5">
+              {s.options.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => onChange({ [s.key]: opt.value })}
+                  className={cn(
+                    "py-2 rounded-lg text-xs font-medium transition-all text-center leading-tight",
+                    data[s.key] === opt.value
+                      ? "bg-primary text-primary-foreground shadow-md"
+                      : "glass text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
         ))}
 

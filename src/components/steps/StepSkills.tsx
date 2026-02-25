@@ -1,6 +1,14 @@
 import { motion } from "framer-motion";
-import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
+
+const nonSkierOptions = [
+  { value: 0, label: "Not at all" },
+  { value: 25, label: "Minor" },
+  { value: 50, label: "Matters" },
+  { value: 75, label: "Important" },
+  { value: 100, label: "Top Priority" },
+];
 
 const levels = ["Beginner", "Intermediate", "Advanced", "Expert"];
 
@@ -82,18 +90,23 @@ const StepSkills = ({ data, onChange }: StepSkillsProps) => {
             className="space-y-3 pt-4 border-t border-border"
           >
             <label className="text-xs font-medium text-muted-foreground">
-              Non-skier activities importance
+              How important are non-skier activities?
             </label>
-            <Slider
-              min={0}
-              max={100}
-              step={10}
-              value={[data.nonSkierImportance]}
-              onValueChange={([v]) => onChange({ nonSkierImportance: v })}
-            />
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Not important</span>
-              <span>Very important</span>
+            <div className="grid grid-cols-5 gap-1.5">
+              {nonSkierOptions.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => onChange({ nonSkierImportance: opt.value })}
+                  className={cn(
+                    "py-2 rounded-lg text-xs font-medium transition-all text-center leading-tight",
+                    data.nonSkierImportance === opt.value
+                      ? "bg-primary text-primary-foreground shadow-md"
+                      : "glass text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
             </div>
           </motion.div>
         )}
