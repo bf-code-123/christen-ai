@@ -77,7 +77,10 @@ serve(async (req) => {
     });
     if (!resortRes.ok) throw new Error(`fetch-resort-data failed: ${resortRes.status}`);
     const { resorts } = await resortRes.json();
-    console.log('Resorts:', resorts.length);
+    console.log('Resorts fetched:', resorts.length);
+    // Limit to 12 resorts to keep prompt small and fast
+    const topResorts = resorts.slice(0, 12);
+    console.log('Resorts (capped):', topResorts.length);
 
     // 5. Lodging options (needs resort list from step 4)
     console.log('Fetching lodging...');
@@ -88,7 +91,7 @@ serve(async (req) => {
         signal: AbortSignal.timeout(10000),
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
         body: JSON.stringify({
-          resorts: resorts.map((r: any) => ({ name: r.name, lodgingRange: r.lodgingRange })),
+          resorts: topResorts.map((r: any) => ({ name: r.name, lodgingRange: r.lodgingRange })),
           groupSize: trip.group_size,
           lodgingPreference: trip.lodging_preference || 'Hotel',
           nights,
@@ -145,7 +148,7 @@ Return ONLY valid JSON in this exact format:
   ]
 }`;
 
-    const resortLines = resorts.map((r: any) => {
+    const resortLines = topResorts.map((r: any) => {
       const snow = r.snow || {};
       const depth = snow.currentSnowDepth ?? snow.historicalSnowDepth ?? 0;
       const recent = snow.last7daysSnowfall ?? snow.historicalSnowfall ?? 0;
@@ -195,6 +198,7 @@ Please recommend the top 3 resorts for this group.`;
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${userMessage}` }] }],
         generationConfig: { temperature: 0.7, responseMimeType: 'application/json' },
+        thinkingConfig: { thinkingBudget: 0 },
       }),
     });
     if (!aiRes.ok) {
@@ -217,7 +221,7 @@ Please recommend the top 3 resorts for this group.`;
     }
 
     const resortLookup: Record<string, any> = {};
-    resorts.forEach((r: any) => { resortLookup[r.name] = r; });
+    topResorts.forEach((r: any) => { resortLookup[r.name] = r; });
 
     if (recommendations.recommendations) {
       recommendations.recommendations = recommendations.recommendations.map((rec: any) => {
