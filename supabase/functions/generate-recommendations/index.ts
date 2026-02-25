@@ -137,7 +137,7 @@ serve(async (req) => {
       .filter(Boolean) as { airport: string; guestName: string }[];
     console.log('Step 5+6: Valid flight origins:', JSON.stringify(origins));
 
-    const [lodgingRes, flightRes] = await Promise.all([
+    const [lodgingResult, flightResult] = await Promise.all([
       fetch(`${SUPABASE_URL}/functions/v1/fetch-lodging`, {
         method: 'POST',
         signal: AbortSignal.timeout(15000),
@@ -148,7 +148,7 @@ serve(async (req) => {
           lodgingPreference: trip.lodging_preference || 'Hotel',
           nights,
         }),
-      }),
+      }).catch((err: unknown) => { console.error('Step 5 fetch threw:', err); return null; }),
       (origins.length > 0 && trip.date_start && trip.date_end)
         ? fetch(`${SUPABASE_URL}/functions/v1/fetch-flights`, {
             method: 'POST',
@@ -160,28 +160,32 @@ serve(async (req) => {
               returnDate: trip.date_end,
               resorts: resortData.resorts.map((r: any) => r.name),
             }),
-          })
+          }).catch((err: unknown) => { console.error('Step 6 fetch threw:', err); return null; })
         : Promise.resolve(null),
     ]);
 
-    if (!lodgingRes.ok) {
-      const body = await lodgingRes.text();
-      console.error('Step 5 failed: fetch-lodging returned', lodgingRes.status, body);
+    let lodgingData: any = { lodging: {} };
+    if (!lodgingResult) {
+      console.error('Step 5 failed: fetch-lodging did not respond');
+    } else if (!lodgingResult.ok) {
+      const body = await lodgingResult.text();
+      console.error('Step 5 failed: fetch-lodging returned', lodgingResult.status, body);
+    } else {
+      lodgingData = await lodgingResult.json().catch(() => ({ lodging: {} }));
+      console.log('Step 5: Lodging data fetched, keys:', Object.keys(lodgingData.lodging || {}).length);
     }
-    const lodgingData = await lodgingRes.json();
-    console.log('Step 5: Lodging data fetched, keys:', Object.keys(lodgingData.lodging || {}).length);
 
     let flightData: any = null;
-    if (flightRes === null) {
-      console.log('Step 6: Skipping flights - no valid origins or missing dates');
+    if (!flightResult) {
+      console.log('Step 6: Skipping flights - no valid origins, missing dates, or fetch failed');
     } else {
-      console.log('Step 6: fetch-flights response status:', flightRes.status);
-      if (flightRes.ok) {
-        flightData = await flightRes.json();
-        console.log('Step 6: Flight data received, origins in data:', Object.keys(flightData.flights || {}).length);
+      console.log('Step 6: fetch-flights response status:', flightResult.status);
+      if (flightResult.ok) {
+        flightData = await flightResult.json().catch(() => null);
+        console.log('Step 6: Flight data received, origins in data:', Object.keys(flightData?.flights || {}).length);
       } else {
-        const flightErrBody = await flightRes.text();
-        console.error('Step 6 failed: fetch-flights returned', flightRes.status, flightErrBody);
+        const flightErrBody = await flightResult.text();
+        console.error('Step 6 failed: fetch-flights returned', flightResult.status, flightErrBody);
       }
     }
 
