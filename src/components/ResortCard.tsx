@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import MatchScoreRing from "@/components/MatchScoreRing";
+import FlightDetails from "@/components/FlightDetails";
 
 interface ResortCardProps {
   resort: any;
@@ -292,6 +293,9 @@ const ResortCard = ({ resort, rank, isBestPick }: ResortCardProps) => {
             </div>
           </div>
         )}
+
+        {/* Real Flight Options */}
+        <FlightDetails realFlights={resort.realFlights} resortName={resort.resortName} />
 
         {/* Itinerary */}
         {resort.itinerary?.length > 0 && (
