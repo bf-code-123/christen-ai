@@ -39,10 +39,10 @@ const WIKI_ARTICLE: Record<string, string> = {
   "Chamonix": "Chamonix",
   "Verbier": "Verbier",
   "Zermatt": "Zermatt",
-  "Val d'Isère": "Val_d'Is%C3%A8re",
+  "Val d'Isère": "Val d'Isère",
   "Courchevel": "Courchevel",
-  "St. Anton": "St._Anton_am_Arlberg",
-  "Kitzbühel": "Kitzb%C3%BChel",
+  "St. Anton": "St. Anton am Arlberg",
+  "Kitzbühel": "Kitzbühel",
   "Les Arcs": "Les_Arcs",
   "Tignes": "Tignes",
   "Niseko": "Niseko",
@@ -196,17 +196,26 @@ const ResortCard = ({ resort, rank, isBestPick }: ResortCardProps) => {
 
   useEffect(() => {
     const article = WIKI_ARTICLE[resort.resortName]
-      ?? resort.resortName.replace(/\s+/g, "_");
-    fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(article)}`, {
-      headers: { Accept: "application/json" },
-    })
+      ?? resort.resortName.replace(/_/g, " ");
+    // Use the action API with prop=pageimages — much better coverage than
+    // the REST summary endpoint (which only has thumbnails for ~50% of articles)
+    const url = new URL("https://en.wikipedia.org/w/api.php");
+    url.searchParams.set("action", "query");
+    url.searchParams.set("titles", article);
+    url.searchParams.set("prop", "pageimages");
+    url.searchParams.set("pithumbsize", "1200");
+    url.searchParams.set("pilicense", "any");
+    url.searchParams.set("format", "json");
+    url.searchParams.set("origin", "*");
+
+    fetch(url.toString())
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
-        const src = data?.thumbnail?.source;
-        if (src) {
-          // Bump thumbnail width to 1200px for better quality
-          setHeroImg(src.replace(/\/\d+px-/, "/1200px-"));
-        }
+        const pages = data?.query?.pages;
+        if (!pages) return;
+        const page = Object.values(pages)[0] as any;
+        const src = page?.thumbnail?.source;
+        if (src) setHeroImg(src);
       })
       .catch(() => {});
   }, [resort.resortName]);
