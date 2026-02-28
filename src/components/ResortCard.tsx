@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Snowflake, DollarSign, AlertTriangle, Calendar, ChevronDown,
@@ -7,6 +7,49 @@ import {
 import { Button } from "@/components/ui/button";
 import MatchScoreRing from "@/components/MatchScoreRing";
 import FlightDetails from "@/components/FlightDetails";
+
+// Maps resort names to their Wikipedia article titles for accurate photo lookup
+const WIKI_ARTICLE: Record<string, string> = {
+  "Whistler Blackcomb": "Whistler_Blackcomb",
+  "Vail": "Vail_Mountain_Resort",
+  "Park City": "Park_City_Mountain_Resort",
+  "Jackson Hole": "Jackson_Hole_Mountain_Resort",
+  "Telluride": "Telluride_Ski_Resort",
+  "Mammoth Mountain": "Mammoth_Mountain",
+  "Steamboat": "Steamboat_Ski_Resort",
+  "Stowe": "Stowe_Mountain_Resort",
+  "Sunday River": "Sunday_River_Resort",
+  "Killington": "Killington_Resort",
+  "Big Sky": "Big_Sky_Resort",
+  "Taos Ski Valley": "Taos_Ski_Valley",
+  "Alta": "Alta_Ski_Area",
+  "Snowbird": "Snowbird_(ski_resort)",
+  "Arapahoe Basin": "Arapahoe_Basin_Ski_Area",
+  "Banff Sunshine": "Sunshine_Village",
+  "Lake Louise": "Lake_Louise_Ski_Resort",
+  "Mont-Tremblant": "Mont-Tremblant_Resort",
+  "Revelstoke": "Revelstoke_Mountain_Resort",
+  "Aspen Snowmass": "Snowmass_(ski_area)",
+  "Deer Valley": "Deer_Valley_Resort",
+  "Breckenridge": "Breckenridge_Ski_Resort",
+  "Copper Mountain": "Copper_Mountain_Resort",
+  "Squaw Valley / Palisades": "Palisades_Tahoe",
+  "Sun Valley": "Sun_Valley_Resort",
+  "Winter Park": "Winter_Park_Resort",
+  "Chamonix": "Chamonix",
+  "Verbier": "Verbier",
+  "Zermatt": "Zermatt",
+  "Val d'Isère": "Val_d'Is%C3%A8re",
+  "Courchevel": "Courchevel",
+  "St. Anton": "St._Anton_am_Arlberg",
+  "Kitzbühel": "Kitzb%C3%BChel",
+  "Les Arcs": "Les_Arcs",
+  "Tignes": "Tignes",
+  "Niseko": "Niseko",
+  "Hakuba": "Hakuba_Valley",
+  "Furano": "Furano_Ski_Resort",
+  "Nozawa Onsen": "Nozawa_Onsen",
+};
 
 interface ResortCardProps {
   resort: any;
@@ -149,6 +192,24 @@ const SnowConditionsDisplay = ({ snow }: { snow: any }) => {
 const ResortCard = ({ resort, rank, isBestPick }: ResortCardProps) => {
   const [showItinerary, setShowItinerary] = useState(false);
   const [showCosts, setShowCosts] = useState(false);
+  const [heroImg, setHeroImg] = useState<string | null>(null);
+
+  useEffect(() => {
+    const article = WIKI_ARTICLE[resort.resortName]
+      ?? resort.resortName.replace(/\s+/g, "_");
+    fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(article)}`, {
+      headers: { Accept: "application/json" },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const src = data?.thumbnail?.source;
+        if (src) {
+          // Bump thumbnail width to 1200px for better quality
+          setHeroImg(src.replace(/\/\d+px-/, "/1200px-"));
+        }
+      })
+      .catch(() => {});
+  }, [resort.resortName]);
 
   const cost = resort.costBreakdown;
   const snow = resort.snowConditions;
@@ -165,8 +226,17 @@ const ResortCard = ({ resort, rank, isBestPick }: ResortCardProps) => {
     >
       {/* Hero */}
       <div className="relative h-44 sm:h-52 overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-primary/30 via-secondary to-muted" />
-        <div className="absolute inset-0 bg-gradient-to-t from-card/90 via-card/30 to-transparent" />
+        {heroImg ? (
+          <img
+            src={heroImg}
+            alt={resort.resortName}
+            className="absolute inset-0 w-full h-full object-cover scale-105"
+            onError={() => setHeroImg(null)}
+          />
+        ) : (
+          <div className="absolute inset-0 bg-gradient-to-br from-primary/30 via-secondary to-muted" />
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-card/90 via-card/40 to-black/20" />
 
         {isBestPick && (
           <div className="absolute top-3 left-3 bg-primary text-primary-foreground text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5 z-10">
